@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test output
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# Go workspace
+go.work
+go.work.sum
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Planning docs (kept local, not submitted)
+/CASE.md
+/DECISIONS.md
