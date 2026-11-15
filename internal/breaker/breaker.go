@@ -10,7 +10,9 @@ import (
 )
 
 // State is a breaker state as reported on /health and, later, as a metric.
-type State string
+// It is an alias of string so the worker's Breaker interface needs no import
+// of this package.
+type State = string
 
 const (
 	StateClosed   State = "closed"
