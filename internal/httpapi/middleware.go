@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asrasari/notification-service/internal/logging"
+	"github.com/asrasari/notification-service/internal/metrics"
 )
 
 // CorrelationIDHeader is read from requests and echoed on every response.
@@ -56,25 +57,29 @@ func newCorrelationID() string {
 	return uuid.NewString()
 }
 
-// accessLog logs one line per request: method, route pattern, status and
-// duration. correlation_id is added by the logging handler from the context.
-// It must wrap the ServeMux directly, because the mux records the matched
-// pattern on the *http.Request it receives.
-func accessLog(logger *slog.Logger, next http.Handler) http.Handler {
+// accessLog logs one line per request (method, route pattern, status,
+// duration) and records the same values in http_requests_total and
+// http_request_duration_seconds. correlation_id is added by the logging
+// handler from the context. It must wrap the ServeMux directly, because the
+// mux records the matched pattern on the *http.Request it receives. The
+// route is never the raw path: unmatched requests are "unmatched" (D-015).
+func accessLog(logger *slog.Logger, m *metrics.API, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 
+		elapsed := time.Since(start)
 		route := r.Pattern
 		if route == "" {
 			route = "unmatched"
 		}
+		m.ObserveRequest(r.Method, route, rec.status, elapsed)
 		logger.LogAttrs(r.Context(), slog.LevelInfo, "http request",
 			slog.String("method", r.Method),
 			slog.String("route", route),
 			slog.Int("status", rec.status),
-			slog.Float64("duration_ms", float64(time.Since(start).Microseconds())/1000),
+			slog.Float64("duration_ms", float64(elapsed.Microseconds())/1000),
 		)
 	})
 }

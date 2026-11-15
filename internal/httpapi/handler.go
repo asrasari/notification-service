@@ -7,6 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/asrasari/notification-service/internal/metrics"
 )
 
 // Pinger reports whether the database is reachable. *pgxpool.Pool satisfies it.
@@ -18,10 +22,26 @@ type Pinger interface {
 // Postgres hangs.
 const healthPingTimeout = 2 * time.Second
 
+// Deps are what the API handler needs.
+type Deps struct {
+	Logger *slog.Logger
+	DB     Pinger
+	Store  Store
+	// Metrics records the API metrics; nil records nothing.
+	Metrics *metrics.API
+	// Registry is served on GET /metrics; nil serves an empty registry.
+	Registry *prometheus.Registry
+}
+
 // NewHandler returns the API's root handler with all routes and middleware.
 // Routing is the stdlib ServeMux with method and {id} patterns (D-012).
-func NewHandler(logger *slog.Logger, db Pinger, store Store) http.Handler {
-	a := &handlers{logger: logger, store: store}
+func NewHandler(d Deps) http.Handler {
+	logger, db := d.Logger, d.DB
+	a := &handlers{logger: logger, store: d.Store, metrics: d.Metrics}
+	reg := d.Registry
+	if reg == nil {
+		reg = prometheus.NewRegistry()
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", healthHandler(logger, db))
@@ -34,8 +54,9 @@ func NewHandler(logger *slog.Logger, db Pinger, store Store) http.Handler {
 	mux.HandleFunc("POST /batches/{id}/cancel", a.cancelBatch)
 	mux.HandleFunc("GET /openapi.yaml", openAPIHandler)
 	mux.HandleFunc("GET /docs", docsHandler)
+	mux.Handle("GET /metrics", metrics.Handler(reg))
 
-	return withCorrelationID(accessLog(logger, jsonFallback(mux)))
+	return withCorrelationID(accessLog(logger, d.Metrics, jsonFallback(mux)))
 }
 
 // jsonFallback answers unmatched requests with the JSON problem format

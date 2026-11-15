@@ -96,7 +96,7 @@ func start(t *testing.T, replies ...func(http.ResponseWriter)) *e2e {
 	}
 
 	e := &e2e{t: t, provider: &fakeProvider{replies: replies}}
-	e.api = httptest.NewServer(httpapi.NewHandler(logger, pool, postgres.NewStore(pool, 6)))
+	e.api = httptest.NewServer(httpapi.NewHandler(httpapi.Deps{Logger: logger, DB: pool, Store: postgres.NewStore(pool, 6)}))
 	t.Cleanup(e.api.Close)
 	prov := httptest.NewServer(e.provider)
 	t.Cleanup(prov.Close)

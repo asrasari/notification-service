@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asrasari/notification-service/internal/metrics"
 	"github.com/asrasari/notification-service/internal/notification"
 	"github.com/asrasari/notification-service/internal/postgres"
 )
@@ -26,8 +27,9 @@ type Store interface {
 }
 
 type handlers struct {
-	logger *slog.Logger
-	store  Store
+	logger  *slog.Logger
+	store   Store
+	metrics *metrics.API
 }
 
 // createNotification handles POST /notifications: 201 with Location for a
@@ -69,6 +71,7 @@ func (a *handlers) createNotification(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, toJSON(n))
 		return
 	}
+	a.metrics.NotificationCreated(string(n.Channel), n.Priority.String())
 	w.Header().Set("Location", "/notifications/"+n.ID.String())
 	writeJSON(w, http.StatusCreated, toJSON(n))
 }
@@ -111,6 +114,12 @@ func (a *handlers) createBatch(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		internalError(a.logger, w, r, err)
 		return
+	}
+	// Count new rows only: duplicates are idempotent replays (D-015).
+	for i, it := range res.Items {
+		if !it.Duplicate {
+			a.metrics.NotificationCreated(string(drafts[i].Channel), drafts[i].Priority.String())
+		}
 	}
 	status := http.StatusOK
 	if res.Created {

@@ -13,10 +13,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/asrasari/notification-service/api"
 	"github.com/asrasari/notification-service/internal/httpapi"
 	"github.com/asrasari/notification-service/internal/logging"
+	"github.com/asrasari/notification-service/internal/metrics"
 	"github.com/asrasari/notification-service/internal/postgres"
 	"github.com/asrasari/notification-service/internal/testdb"
 )
@@ -28,6 +30,7 @@ type env struct {
 	t    *testing.T
 	srv  *httptest.Server
 	pool *pgxpool.Pool
+	reg  *prometheus.Registry
 }
 
 func newEnv(t *testing.T) *env {
@@ -41,9 +44,13 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(httpapi.NewHandler(logger, pool, postgres.NewStore(pool, 6)))
+	reg := metrics.NewRegistry()
+	srv := httptest.NewServer(httpapi.NewHandler(httpapi.Deps{
+		Logger: logger, DB: pool, Store: postgres.NewStore(pool, 6),
+		Metrics: metrics.NewAPI(reg), Registry: reg,
+	}))
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, pool: pool}
+	return &env{t: t, srv: srv, pool: pool, reg: reg}
 }
 
 // response is a finished HTTP exchange.

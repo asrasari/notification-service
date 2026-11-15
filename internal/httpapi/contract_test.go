@@ -62,8 +62,9 @@ func TestSpecIsValid(t *testing.T) {
 	if doc.OpenAPI != "3.0.3" {
 		t.Errorf("openapi = %q, want 3.0.3", doc.OpenAPI)
 	}
-	if doc.Paths.Find("/metrics") != nil {
-		t.Error("/metrics must stay out of the spec until M4")
+	op := doc.Paths.Find("/metrics")
+	if op == nil || op.Get == nil || op.Get.Responses.Status(200).Value.Content.Get("text/plain") == nil {
+		t.Error("GET /metrics must be in the spec as text/plain (D-015)")
 	}
 }
 
@@ -123,7 +124,7 @@ func TestEveryOperationIsRouted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Only routing is under test, so a store that finds nothing is enough.
-	h := httpapi.NewHandler(logger, fakePinger{}, notFoundStore{})
+	h := httpapi.NewHandler(httpapi.Deps{Logger: logger, DB: fakePinger{}, Store: notFoundStore{}})
 
 	for path, item := range doc.Paths.Map() {
 		for method := range item.Operations() {

@@ -14,6 +14,7 @@ import (
 	"github.com/asrasari/notification-service/internal/config"
 	"github.com/asrasari/notification-service/internal/httpapi"
 	"github.com/asrasari/notification-service/internal/logging"
+	"github.com/asrasari/notification-service/internal/metrics"
 	"github.com/asrasari/notification-service/internal/postgres"
 )
 
@@ -47,8 +48,15 @@ func run(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	store := postgres.NewStore(pool, cfg.Retry.MaxAttempts)
-	srv := httpapi.NewServer(cfg.Server.Addr, httpapi.NewHandler(logger, pool, store),
+	reg := metrics.NewRegistry()
+	handler := httpapi.NewHandler(httpapi.Deps{
+		Logger:   logger,
+		DB:       pool,
+		Store:    postgres.NewStore(pool, cfg.Retry.MaxAttempts),
+		Metrics:  metrics.NewAPI(reg),
+		Registry: reg,
+	})
+	srv := httpapi.NewServer(cfg.Server.Addr, handler,
 		slog.NewLogLogger(logger.Handler(), slog.LevelWarn))
 
 	serveErr := make(chan error, 1)

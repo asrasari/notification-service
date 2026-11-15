@@ -28,7 +28,7 @@ func newTestHandler(t *testing.T, db Pinger) (http.Handler, *bytes.Buffer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewHandler(logger, db, nil), &buf
+	return NewHandler(Deps{Logger: logger, DB: db}), &buf
 }
 
 func TestHealth(t *testing.T) {

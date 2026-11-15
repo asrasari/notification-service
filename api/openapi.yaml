@@ -258,6 +258,25 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Health' }
 
+  /metrics:
+    get:
+      tags: [service]
+      operationId: getMetrics
+      summary: Prometheus metrics
+      description: >-
+        The API process's metrics in the Prometheus text exposition format:
+        HTTP requests, notifications created, queue depth and the age of the
+        oldest due notification, plus Go runtime and process metrics. No
+        authentication: expose it on the internal network only.
+      responses:
+        '200':
+          description: Current metric values.
+          headers:
+            X-Correlation-ID: { $ref: '#/components/headers/CorrelationID' }
+          content:
+            text/plain:
+              schema: { type: string }
+
   /openapi.yaml:
     get:
       tags: [service]
