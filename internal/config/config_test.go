@@ -28,7 +28,7 @@ func TestLoadDefaults(t *testing.T) {
 		{"PROVIDER_TIMEOUT", cfg.Provider.Timeout, 10 * time.Second},
 		{"LEASE_DURATION", cfg.Queue.LeaseDuration, 30 * time.Second},
 		{"POLL_INTERVAL", cfg.Queue.PollInterval, 200 * time.Millisecond},
-		{"WORKER_CONCURRENCY", cfg.Queue.WorkerConcurrency, 25},
+		{"WORKER_CONCURRENCY", cfg.Queue.WorkerConcurrency, 50},
 		{"RATE_LIMIT_PER_CHANNEL", cfg.RateLimit.PerChannel, 100},
 		{"RETRY_MAX_ATTEMPTS", cfg.Retry.MaxAttempts, 6},
 		{"RETRY_BASE", cfg.Retry.Base, 10 * time.Second},

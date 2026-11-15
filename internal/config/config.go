@@ -53,7 +53,7 @@ type Provider struct {
 type Queue struct {
 	LeaseDuration     time.Duration `env:"LEASE_DURATION" envDefault:"30s"`
 	PollInterval      time.Duration `env:"POLL_INTERVAL" envDefault:"200ms"`
-	WorkerConcurrency int           `env:"WORKER_CONCURRENCY" envDefault:"25"`
+	WorkerConcurrency int           `env:"WORKER_CONCURRENCY" envDefault:"50"`
 }
 
 // RateLimit configures the per-channel send rate.
