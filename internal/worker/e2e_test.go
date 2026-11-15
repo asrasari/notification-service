@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,12 +18,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"golang.org/x/time/rate"
 
 	"github.com/asrasari/notification-service/internal/breaker"
 	"github.com/asrasari/notification-service/internal/config"
 	"github.com/asrasari/notification-service/internal/httpapi"
 	"github.com/asrasari/notification-service/internal/logging"
+	"github.com/asrasari/notification-service/internal/metrics"
 	"github.com/asrasari/notification-service/internal/notification"
 	"github.com/asrasari/notification-service/internal/postgres"
 	"github.com/asrasari/notification-service/internal/provider"
@@ -81,6 +85,9 @@ type e2e struct {
 	t        *testing.T
 	api      *httptest.Server
 	provider *fakeProvider
+	apiReg   *prometheus.Registry
+	reg      *prometheus.Registry // the worker's
+	worker   *worker.Worker
 }
 
 func start(t *testing.T, replies ...func(http.ResponseWriter)) *e2e {
@@ -95,8 +102,13 @@ func start(t *testing.T, replies ...func(http.ResponseWriter)) *e2e {
 		t.Fatal(err)
 	}
 
-	e := &e2e{t: t, provider: &fakeProvider{replies: replies}}
-	e.api = httptest.NewServer(httpapi.NewHandler(httpapi.Deps{Logger: logger, DB: pool, Store: postgres.NewStore(pool, 6)}))
+	e := &e2e{t: t, provider: &fakeProvider{replies: replies}, apiReg: metrics.NewRegistry(), reg: metrics.NewRegistry()}
+	store := postgres.NewStore(pool, 6)
+	metrics.RegisterQueueCollector(e.apiReg, store, logger)
+	e.api = httptest.NewServer(httpapi.NewHandler(httpapi.Deps{
+		Logger: logger, DB: pool, Store: store, Workers: postgres.NewHeartbeats(pool),
+		Metrics: metrics.NewAPI(e.apiReg), Registry: e.apiReg,
+	}))
 	t.Cleanup(e.api.Close)
 	prov := httptest.NewServer(e.provider)
 	t.Cleanup(prov.Close)
@@ -109,17 +121,21 @@ func start(t *testing.T, replies ...func(http.ResponseWriter)) *e2e {
 		RetryAfterCap:      retryAfterCap,
 		BreakerOpenTimeout: 300 * time.Millisecond,
 	}
+	wm := metrics.NewWorker(e.reg)
+	cfg.OnAttempt, cfg.OnClaim = wm.OnAttempt, wm.OnClaim
 	var deps []worker.ChannelDeps
 	for _, ch := range notification.Channels {
 		deps = append(deps, worker.ChannelDeps{
 			Channel: ch,
 			Breaker: breaker.New(config.Breaker{Window: 10 * time.Second, MinRequests: 20, FailureRatio: 0.5, OpenTimeout: time.Second},
-				breaker.Options{Name: string(ch), IsExcluded: worker.IsExcluded}),
+				breaker.Options{Name: string(ch), IsExcluded: worker.IsExcluded, OnStateChange: func(name string, _, to breaker.State) { wm.BreakerState(name, to) }}),
 			Limiter: rate.NewLimiter(100, 1),
 		})
 	}
 	w := worker.New(cfg, postgres.NewQueue(pool, 2*time.Second),
 		provider.New(provider.Options{URL: prov.URL + "/hook", Timeout: sendTimeout, MaxConns: 4}), logger, deps)
+	e.worker = w
+	metrics.RegisterWorkerState(e.reg, w)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -286,4 +302,158 @@ func TestE2ETimeoutIsUnknownThenSent(t *testing.T) {
 	if n.DeliveryAttempts[0].HTTPStatus != nil {
 		t.Errorf("timeout attempt has http_status %d", *n.DeliveryAttempts[0].HTTPStatus)
 	}
+}
+
+// TestE2EMetrics checks the worker and API metrics after a 500 then a 202,
+// and that every label value comes from the fixed D-015 sets.
+func TestE2EMetrics(t *testing.T) {
+	t.Parallel()
+	e := start(t, reply(http.StatusInternalServerError), reply(http.StatusAccepted))
+	id := e.create(`{"recipient":"+905551234567","channel":"sms","content":"Your code is 1234","priority":"high"}`)
+	e.waitFor(id, "sent")
+
+	// OnAttempt runs right after the result is written; give it a moment.
+	deadline := time.Now().Add(5 * time.Second)
+	for counterSum(t, e.reg, "notification_results_total") < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	want := `
+# HELP notification_attempts_total Delivery attempts by channel, priority and outcome (success, transient, permanent, unknown, channel_wide).
+# TYPE notification_attempts_total counter
+notification_attempts_total{channel="sms",outcome="success",priority="high"} 1
+notification_attempts_total{channel="sms",outcome="transient",priority="high"} 1
+# HELP notification_results_total Final states written by the worker (sent, failed), by channel.
+# TYPE notification_results_total counter
+notification_results_total{channel="sms",status="sent"} 1
+# HELP senders_busy In-flight provider sends, by channel.
+# TYPE senders_busy gauge
+senders_busy{channel="email"} 0
+senders_busy{channel="push"} 0
+senders_busy{channel="sms"} 0
+`
+	if err := testutil.GatherAndCompare(e.reg, strings.NewReader(want),
+		"notification_attempts_total", "notification_results_total", "senders_busy"); err != nil {
+		t.Error(err)
+	}
+	for name, min := range map[string]uint64{
+		"notification_send_duration_seconds":    2,
+		"notification_delivery_latency_seconds": 1,
+		"notification_claim_duration_seconds":   2,
+	} {
+		if got := sampleCount(t, e.reg, name); got < min {
+			t.Errorf("%s has %d samples, want >= %d", name, got, min)
+		}
+	}
+	if got := sampleCount(t, e.reg, "notification_delivery_latency_seconds"); got != 1 {
+		t.Errorf("delivery latency samples = %d, want exactly 1 (one sent)", got)
+	}
+
+	// API side: the create, the polling GETs and a /metrics scrape.
+	res, err := http.Get(e.api.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	for _, s := range []string{
+		`notifications_created_total{channel="sms",priority="high"} 1`,
+		`http_requests_total{method="POST",route="POST /notifications",status="201"} 1`,
+		`notification_queue_depth{channel="sms",priority="high",state="due"} 0`,
+		`notification_queue_oldest_due_seconds{channel="sms"} 0`,
+	} {
+		if !strings.Contains(string(body), s) {
+			t.Errorf("API /metrics lacks %s", s)
+		}
+	}
+
+	checkLabels(t, e.reg, id)
+	checkLabels(t, e.apiReg, id)
+}
+
+// allowedLabels are the D-015 label sets. route and status are checked
+// by shape: a ServeMux pattern or "unmatched", and an HTTP code or a
+// notification status.
+var allowedLabels = map[string]map[string]bool{
+	"channel":  set("sms", "email", "push"),
+	"priority": set("high", "normal", "low"),
+	"outcome":  set("success", "transient", "permanent", "unknown", "channel_wide"),
+	"state":    set("due", "delayed", "processing"),
+	"method":   set("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE", "other"),
+}
+
+func set(vs ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, v := range vs {
+		m[v] = true
+	}
+	return m
+}
+
+var (
+	routeRE  = regexp.MustCompile(`^(unmatched|[A-Z]+ /[a-z/.{}]*)$`)
+	statusRE = regexp.MustCompile(`^([1-5][0-9][0-9]|sent|failed)$`)
+)
+
+func checkLabels(t *testing.T, g prometheus.Gatherer, forbidden ...string) {
+	t.Helper()
+	mfs, err := g.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden = append(forbidden, "+905551234567", "Your code", "/hook", "127.0.0.1")
+	for _, mf := range mfs {
+		name := mf.GetName()
+		if strings.HasPrefix(name, "go_") || strings.HasPrefix(name, "process_") || strings.HasPrefix(name, "promhttp_") {
+			continue // the library's own collectors
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				k, v := lp.GetName(), lp.GetValue()
+				ok := allowedLabels[k][v] ||
+					(k == "route" && routeRE.MatchString(v)) ||
+					(k == "status" && statusRE.MatchString(v))
+				for _, f := range forbidden {
+					ok = ok && !strings.Contains(v, f)
+				}
+				if !ok {
+					t.Errorf("%s has label %s=%q outside the fixed sets", name, k, v)
+				}
+			}
+		}
+	}
+}
+
+func counterSum(t *testing.T, g prometheus.Gatherer, name string) float64 {
+	t.Helper()
+	mfs, err := g.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n float64
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			for _, m := range mf.GetMetric() {
+				n += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return n
+}
+
+func sampleCount(t *testing.T, g prometheus.Gatherer, name string) uint64 {
+	t.Helper()
+	mfs, err := g.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n uint64
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			for _, m := range mf.GetMetric() {
+				n += m.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return n
 }
