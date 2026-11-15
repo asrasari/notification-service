@@ -48,11 +48,13 @@ func run(ctx context.Context) error {
 	}
 	defer pool.Close()
 
+	store := postgres.NewStore(pool, cfg.Retry.MaxAttempts)
 	reg := metrics.NewRegistry()
+	metrics.RegisterQueueCollector(reg, store, logger)
 	handler := httpapi.NewHandler(httpapi.Deps{
 		Logger:   logger,
 		DB:       pool,
-		Store:    postgres.NewStore(pool, cfg.Retry.MaxAttempts),
+		Store:    store,
 		Metrics:  metrics.NewAPI(reg),
 		Registry: reg,
 	})
