@@ -3,25 +3,23 @@ package migrations_test
 import (
 	"context"
 	"database/sql"
-	"os"
 	"testing"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
 
+	"github.com/asrasari/notification-service/internal/testdb"
 	"github.com/asrasari/notification-service/migrations"
 )
+
+func TestMain(m *testing.M) { testdb.Main(m) }
 
 // TestUpDownUp applies every migration, rolls all of them back, and applies
 // them again (D-013). It proves each Down section undoes its Up section.
 //
-// It needs a disposable Postgres database: the test drops every table it
-// knows about. Set TEST_DATABASE_URL to run it; it is skipped otherwise.
+// It drops every table, so it runs in its own database from testdb (D-017).
 func TestUpDownUp(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping migration integration test")
-	}
+	dsn := testdb.New(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -42,7 +40,7 @@ func TestUpDownUp(t *testing.T) {
 	}
 	latest := sources[len(sources)-1].Version
 
-	// Start from an empty schema whatever state a previous run left behind.
+	// testdb databases arrive migrated; start from an empty schema instead.
 	if _, err := p.DownTo(ctx, 0); err != nil {
 		t.Fatalf("initial down: %v", err)
 	}
