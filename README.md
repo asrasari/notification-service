@@ -13,7 +13,7 @@ flowchart LR
     worker -->|claim with lease,<br/>write result| pg
     worker -->|"POST {to, channel, content}<br/>Idempotency-Key"| provider([provider<br/>webhook.site])
     worker -.->|heartbeat row| pg
-    prom([Prometheus]) -.->|GET /metrics| api
+    prom([Prometheus<br/>not included]) -.->|GET /metrics| api
     prom -.->|GET /metrics| worker
     ops([load balancer / ops]) -.->|GET /health| api
     ops -.->|GET /health| worker
@@ -284,7 +284,7 @@ senders_busy{channel="sms"} 0
 ## Key design decisions
 
 1. **PostgreSQL is the only datastore and the queue.**
-   - *Why:* the notification and its queue entry are one row, so there is no dual write and no outbox. At most 300 msg/s is easy for Postgres. `SKIP LOCKED`, partial indexes and conditional updates give a reliable queue in about 100 lines we control.
+   - *Why:* the notification and its queue entry are one row, so there is no dual write and no outbox. At most 300 msg/s is easy for Postgres. `SKIP LOCKED`, partial indexes and conditional updates give a reliable queue in one small file we control.
    - *If different:* at much higher volume, a separate `jobs` table or Kafka/SQS. For our own retry design we skipped job libraries like River, which bring their own retry logic.
 2. **API and worker are separate processes from one image.**
    - *Why:* the API scales with incoming traffic and the worker with the rate limit. A worker crash can't take the API down, and one image keeps builds simple.
@@ -305,7 +305,7 @@ senders_busy{channel="sms"} 0
    - *Why:* strict priority would starve `low` for hours during a large `high` campaign. Weighted round-robin keeps `high` fast (≥ 70 % of the rate, 100 % when it's alone) while everything moves. Each probe uses the claim index with equality on priority, so it stays fast however large the backlog.
    - *If different:* aging, or per-tenant quotas for `high`.
 8. **A token bucket with burst 1, and one dispatcher per channel.**
-   - *Why:* burst 1 spaces sends evenly, unlike a fixed window, which allows bursts of 2× the rate at the window boundary. One dispatcher enforces every rule (pause, breaker, token, priority, claim) in one place. When idle it costs about 5 queries per second per channel, instead of 50 senders each polling on their own.
+   - *Why:* burst 1 spaces sends evenly, unlike a fixed window, which allows bursts of 2× the rate at the window boundary. One dispatcher enforces every rule (pause, breaker, token, priority, claim) in one place. When idle it costs about 5 claim transactions per second per channel (up to 3 small index probes each), instead of 50 senders each polling on their own.
    - *If different:* a shared limiter (Postgres or Redis) for several replicas, and `LISTEN/NOTIFY` to drop the 200 ms poll.
 9. **Cursor pagination on `(created_at, id)`.**
    - *Why:* offset pagination skips or repeats rows while new ones arrive, and gets slower the deeper you page. The keyset cursor is stable and uses an index. The cursor is opaque and versioned (`{"v":1,…}` in base64url), so its format can change.
