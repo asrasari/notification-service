@@ -1,4 +1,4 @@
-.PHONY: build test test-short up down load
+.PHONY: help up down logs test test-short load build
 
 # testcontainers needs two variables when Colima is the active Docker context
 # (D-017): DOCKER_HOST points at Colima's socket, and the socket override is
@@ -10,29 +10,27 @@ TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
 export DOCKER_HOST TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE
 endif
 
-# Build all binaries (api, worker, migrate) into ./bin.
-build:
-	go build -o bin/ ./cmd/...
+help: ## Show this list
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
 
-# Run every test with the race detector. Integration tests start their own
-# Postgres container, so this needs only a running Docker.
-test:
-	go test -race ./...
+up: ## Build the image and start the stack in the background (needs .env with PROVIDER_URL)
+	docker compose up --build -d
+	@echo "API: http://localhost:$${API_PORT:-8080}  (docs: /docs)   worker: http://localhost:$${WORKER_PORT:-8081}/health"
 
-# Unit tests only: skips every test that needs Docker.
-test-short:
-	go test -short ./...
-
-# Build the image and start the whole stack.
-up:
-	docker compose up --build
-
-# Stop the stack (data in the Postgres volume is kept).
-down:
+down: ## Stop the stack (the database volume is kept; add -v by hand to wipe it)
 	docker compose down
 
-# Load test in an isolated compose project (own database, no host ports,
-# never reads .env): 3,000 notifications against a fake provider, then
-# throughput, peak per second and latency per priority. Always tears down.
-load:
+logs: ## Follow the api and worker logs
+	docker compose logs -f api worker
+
+test: ## Run every test with the race detector (needs Docker for the Postgres tests)
+	go test -race ./...
+
+test-short: ## Run the unit tests only (no Docker)
+	go test -short ./...
+
+load: ## Load test: 3,000 notifications against a fake provider in an isolated stack
 	./loadtest/run.sh
+
+build: ## Build the binaries into ./bin
+	go build -o bin/ ./cmd/...
