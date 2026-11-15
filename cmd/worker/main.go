@@ -24,6 +24,7 @@ import (
 	"github.com/asrasari/notification-service/internal/config"
 	"github.com/asrasari/notification-service/internal/httpapi"
 	"github.com/asrasari/notification-service/internal/logging"
+	"github.com/asrasari/notification-service/internal/metrics"
 	"github.com/asrasari/notification-service/internal/notification"
 	"github.com/asrasari/notification-service/internal/postgres"
 	"github.com/asrasari/notification-service/internal/provider"
@@ -74,11 +75,14 @@ func run(ctx context.Context) error {
 	}
 	logger = logger.With("worker_id", workerID)
 
-	w := newWorker(cfg, pool, logger)
+	reg := metrics.NewRegistry()
+	wm := metrics.NewWorker(reg)
+	w := newWorker(cfg, pool, logger, wm)
+	metrics.RegisterWorkerState(reg, w)
 
-	// The worker's own HTTP server (/health; /metrics in M4).
+	// The worker's own HTTP server: /health and /metrics.
 	var shuttingDown atomic.Bool
-	srv := httpapi.NewServer(cfg.Worker.HTTPAddr, worker.NewHealthHandler(w.Status, &shuttingDown),
+	srv := httpapi.NewServer(cfg.Worker.HTTPAddr, worker.NewHTTPHandler(w.Status, &shuttingDown, metrics.Handler(reg)),
 		slog.NewLogLogger(logger.Handler(), slog.LevelWarn))
 	serveErr := make(chan error, 1)
 	go func() {
@@ -159,8 +163,8 @@ func run(ctx context.Context) error {
 }
 
 // newWorker builds one breaker and one rate limiter per channel and the
-// worker around them.
-func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) *worker.Worker {
+// worker around them, with its hooks connected to the metrics.
+func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, wm *metrics.Worker) *worker.Worker {
 	queue := postgres.NewQueue(pool, cfg.Queue.LeaseDuration)
 	client := provider.New(provider.Options{
 		URL:      cfg.Provider.URL,
@@ -174,9 +178,11 @@ func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) *work
 			Name:       string(ch),
 			IsExcluded: worker.IsExcluded,
 			OnStateChange: func(name string, from, to breaker.State) {
+				wm.BreakerState(name, to)
 				logger.Warn("circuit breaker state changed", "channel", name, "from", from, "to", to)
 			},
 		})
+		wm.BreakerState(string(ch), b.State())
 		// Burst 1: sends are evenly spaced, never more than the rate in any
 		// one-second window (D-007).
 		limiter := rate.NewLimiter(rate.Limit(cfg.RateLimit.PerChannel), 1)
@@ -191,6 +197,8 @@ func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) *work
 		Backoff:            retry.Backoff{Base: cfg.Retry.Base, Cap: cfg.Retry.Cap},
 		RetryAfterCap:      cfg.Retry.RetryAfterCap,
 		BreakerOpenTimeout: cfg.Breaker.OpenTimeout,
+		OnAttempt:          wm.OnAttempt,
+		OnClaim:            wm.OnClaim,
 	}, queue, client, logger, deps)
 }
 

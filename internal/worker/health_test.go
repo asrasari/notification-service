@@ -22,7 +22,9 @@ func TestHealthHandler(t *testing.T) {
 		return map[string]ChannelStatus{"sms": {Breaker: "open", Paused: false}, "email": {Breaker: "closed", Paused: true}}
 	}
 	var shutting atomic.Bool
-	h := NewHealthHandler(status, &shutting)
+	h := NewHTTPHandler(status, &shutting, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("metrics here"))
+	}))
 
 	get := func() (*httptest.ResponseRecorder, healthJSON) {
 		rec := httptest.NewRecorder()
@@ -45,6 +47,12 @@ func TestHealthHandler(t *testing.T) {
 	shutting.Store(true)
 	if rec, body := get(); rec.Code != 503 || body.Status != "shutting_down" {
 		t.Fatalf("while shutting down: %d %+v", rec.Code, body)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if rec.Code != 200 || rec.Body.String() != "metrics here" {
+		t.Errorf("GET /metrics = %d %q", rec.Code, rec.Body.String())
 	}
 
 	rec = httptest.NewRecorder()

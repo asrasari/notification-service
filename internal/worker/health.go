@@ -12,13 +12,14 @@ type healthJSON struct {
 	Channels map[string]ChannelStatus `json:"channels"`
 }
 
-// NewHealthHandler serves the worker's HTTP endpoints: GET /health, a
-// liveness check (D-015 continued). It answers 200 with each channel's
-// breaker state and pause flag, and 503 only once shuttingDown is set. It
-// does not touch the database: a DB outage must not get the worker
-// restarted in a loop. /metrics is added in M4.
-func NewHealthHandler(status func() map[string]ChannelStatus, shuttingDown *atomic.Bool) http.Handler {
+// NewHTTPHandler serves the worker's HTTP endpoints (D-015 continued):
+//   - GET /health, a liveness check: 200 with each channel's breaker state
+//     and pause flag, 503 only once shuttingDown is set. It does not touch
+//     the database: a DB outage must not get the worker restarted in a loop.
+//   - GET /metrics, served by metricsHandler.
+func NewHTTPHandler(status func() map[string]ChannelStatus, shuttingDown *atomic.Bool, metricsHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metricsHandler)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		body := healthJSON{Status: "ok", Channels: status()}
 		code := http.StatusOK

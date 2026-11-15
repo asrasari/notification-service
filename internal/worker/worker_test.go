@@ -35,6 +35,8 @@ type fakeStore struct {
 	completeErr error
 	// claimErr, if set, makes claim number i (from 0) fail.
 	claimErr func(i int) error
+	// extra, if set, can add exhausted rows or mark a reclaim on claim i.
+	extra func(i int, res *postgres.ClaimResult)
 }
 
 func (s *fakeStore) Claim(_ context.Context, _ notification.Channel, order []notification.Priority) (postgres.ClaimResult, error) {
@@ -47,10 +49,14 @@ func (s *fakeStore) Claim(_ context.Context, _ notification.Channel, order []not
 			return postgres.ClaimResult{}, err
 		}
 	}
-	if s.next == nil {
-		return postgres.ClaimResult{}, nil
+	var res postgres.ClaimResult
+	if s.next != nil {
+		res.Claimed = s.next(order)
 	}
-	return postgres.ClaimResult{Claimed: s.next(order)}, nil
+	if s.extra != nil {
+		s.extra(len(s.claims)-1, &res)
+	}
+	return res, nil
 }
 
 func (s *fakeStore) Complete(_ context.Context, c postgres.Completion) error {
@@ -390,9 +396,15 @@ func TestConcurrencyIsBounded(t *testing.T) {
 		if n := len(h.sender.times()); n != 3 {
 			t.Fatalf("%d sends in flight, want 3 (WORKER_CONCURRENCY)", n)
 		}
+		if busy := h.w.Busy()["sms"]; busy != 3 {
+			t.Errorf("Busy = %d, want 3", busy)
+		}
 		cancel()
 		close(release)
 		<-stopped
+		if busy := h.w.Busy()["sms"]; busy != 0 {
+			t.Errorf("Busy after the sends finished = %d, want 0", busy)
+		}
 	})
 }
 
@@ -616,6 +628,80 @@ func TestResultIsWrittenEvenIfSendContextEnds(t *testing.T) {
 
 		if _, _, completes := h.store.snapshot(); len(completes) != 1 || completes[0].Status != notification.StatusSent {
 			t.Fatalf("completions = %+v", completes)
+		}
+	})
+}
+
+func TestOnClaimEvents(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testCfg
+		var (
+			mu     sync.Mutex
+			events []ClaimEvent
+		)
+		cfg.OnClaim = func(e ClaimEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, e)
+		}
+		h := newHarness(cfg, nil)
+		h.store.next = rows(1, 2)
+		h.store.extra = func(i int, res *postgres.ClaimResult) {
+			if i == 0 { // a reclaim that also failed two exhausted rows on the way
+				res.Reclaimed = true
+				res.Exhausted = []notification.Notification{*row(notification.PriorityLow, 6), *row(notification.PriorityHigh, 6)}
+			}
+		}
+		h.store.claimErr = func(i int) error {
+			if i == 1 {
+				return errors.New("connection refused")
+			}
+			return nil
+		}
+		h.runFor(time.Second)
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(events) < 3 {
+			t.Fatalf("%d claim events", len(events))
+		}
+		first := events[0]
+		if first.Channel != notification.ChannelSMS || first.Err ||
+			letters(first.Exhausted) != "LH" || letters(first.LostAttempts) != "LHH" {
+			t.Errorf("first event = %+v, want exhausted LH and lost attempts LHH", first)
+		}
+		if !events[1].Err || events[2].Err || len(events[2].LostAttempts) != 0 {
+			t.Errorf("events 2-3 = %+v, %+v", events[1], events[2])
+		}
+	})
+}
+
+func TestAttemptEventDueAt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		created := time.Now().Add(-time.Minute)
+		scheduled := time.Now().Add(-10 * time.Second)
+		h := newHarness(testCfg, nil)
+		i := 0
+		h.store.next = func(order []notification.Priority) *notification.Notification {
+			i++
+			if i > 2 {
+				return nil
+			}
+			n := row(notification.PriorityNormal, 1)
+			n.CreatedAt = created
+			if i == 2 {
+				n.ScheduledAt = &scheduled
+			}
+			return n
+		}
+		h.runFor(100 * time.Millisecond)
+		ev := *h.events
+		if len(ev) != 2 {
+			t.Fatalf("%d events", len(ev))
+		}
+		got := map[time.Time]bool{ev[0].DueAt: true, ev[1].DueAt: true}
+		if !got[created] || !got[scheduled] {
+			t.Fatalf("DueAt = %v, %v; want created_at for one and scheduled_at for the other", ev[0].DueAt, ev[1].DueAt)
 		}
 	})
 }

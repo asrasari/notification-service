@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/asrasari/notification-service/internal/logging"
@@ -59,19 +60,40 @@ type Config struct {
 	Backoff            retry.Backoff
 	RetryAfterCap      time.Duration // RETRY_AFTER_CAP
 	BreakerOpenTimeout time.Duration // requeue delay after a config error (R-M1 Q-004)
-	// OnAttempt, if set, is called after every attempt's result is written
-	// (or discarded). It is the hook for M4's attempt and duration metrics.
+	// OnAttempt, if set, is called after every send's result is written (or
+	// discarded): the hook for the attempt, result, send-duration and
+	// delivery-latency metrics. The worker itself imports no metrics library.
 	OnAttempt func(AttemptEvent)
+	// OnClaim, if set, is called after every claim transaction: the hook for
+	// the claim-duration metric and for attempts recorded inside the claim.
+	OnClaim func(ClaimEvent)
 }
 
-// AttemptEvent describes one finished attempt.
+// AttemptEvent describes one finished send.
 type AttemptEvent struct {
 	Channel      notification.Channel
 	Priority     notification.Priority
 	Outcome      notification.Outcome
 	Status       notification.Status // the status written: sent, pending or failed
 	SendDuration time.Duration
-	Stale        bool // the lease was lost, so nothing was written
+	// DueAt is coalesce(scheduled_at, created_at): delivery latency is
+	// measured from here, so scheduled sends don't look slow (D-015).
+	DueAt time.Time
+	Stale bool // the lease was lost, so nothing was written
+}
+
+// ClaimEvent describes one claim transaction.
+type ClaimEvent struct {
+	Channel  notification.Channel
+	Duration time.Duration
+	Err      bool // the claim failed
+	// LostAttempts are the priorities of expired leases found by the claim:
+	// each recorded an unknown attempt (the reclaimed row and every
+	// exhausted one).
+	LostAttempts []notification.Priority
+	// Exhausted are the priorities of rows failed inside the claim because
+	// their last attempt's lease expired (R-M3).
+	Exhausted []notification.Priority
 }
 
 // ChannelDeps are the per-channel parts: each channel has its own breaker
@@ -124,6 +146,16 @@ type ChannelStatus struct {
 }
 
 // Status returns the state of every channel, keyed by channel name.
+// Busy returns the number of in-flight sends per channel, keyed by channel
+// name (the senders_busy gauge).
+func (w *Worker) Busy() map[string]int {
+	out := make(map[string]int, len(w.channels))
+	for _, c := range w.channels {
+		out[string(c.channel)] = int(c.busy.Load())
+	}
+	return out
+}
+
 func (w *Worker) Status() map[string]ChannelStatus {
 	out := make(map[string]ChannelStatus, len(w.channels))
 	for _, c := range w.channels {
@@ -144,7 +176,8 @@ type channelLoop struct {
 
 	claimErrors int // consecutive failed claims; dispatcher goroutine only
 
-	slots   chan struct{} // one entry per busy sender
+	slots   chan struct{} // one entry per busy sender (or the dispatcher holding a slot)
+	busy    atomic.Int64  // sends in flight
 	senders sync.WaitGroup
 
 	mu          sync.Mutex
@@ -194,7 +227,9 @@ func (c *channelLoop) dispatchOne(ctx, sendCtx context.Context) bool {
 	}
 
 	// 5–6. Pick a priority and claim one row.
+	claimStart := time.Now()
 	res, err := c.store.Claim(ctx, c.channel, c.picker.Order())
+	c.reportClaim(time.Since(claimStart), res, err)
 	for _, n := range res.Exhausted {
 		c.logger.WarnContext(withCorrelation(ctx, n), "notification failed: its last attempt's lease expired",
 			"notification_id", n.ID, "attempt", n.Attempts, "outcome", notification.OutcomeUnknown)
@@ -224,8 +259,9 @@ func (c *channelLoop) dispatchOne(ctx, sendCtx context.Context) bool {
 		c.logger.WarnContext(withCorrelation(ctx, n), "reclaimed an expired lease; previous attempt recorded as unknown",
 			"notification_id", n.ID, "attempt", n.Attempts)
 	}
+	c.busy.Add(1)
 	c.senders.Go(func() {
-		defer func() { <-c.slots }()
+		defer func() { c.busy.Add(-1); <-c.slots }()
 		c.send(withCorrelation(sendCtx, n), n, done)
 	})
 	return true
@@ -292,9 +328,32 @@ func (c *channelLoop) send(ctx context.Context, n notification.Notification, don
 	if c.cfg.OnAttempt != nil {
 		c.cfg.OnAttempt(AttemptEvent{
 			Channel: n.Channel, Priority: n.Priority, Outcome: comp.Attempt.Outcome,
-			Status: comp.Status, SendDuration: resp.Duration, Stale: stale,
+			Status: comp.Status, SendDuration: resp.Duration, DueAt: dueAt(n), Stale: stale,
 		})
 	}
+}
+
+// reportClaim calls OnClaim.
+func (c *channelLoop) reportClaim(d time.Duration, res postgres.ClaimResult, err error) {
+	if c.cfg.OnClaim == nil {
+		return
+	}
+	ev := ClaimEvent{Channel: c.channel, Duration: d, Err: err != nil}
+	for _, n := range res.Exhausted {
+		ev.Exhausted = append(ev.Exhausted, n.Priority)
+		ev.LostAttempts = append(ev.LostAttempts, n.Priority)
+	}
+	if res.Claimed != nil && res.Reclaimed {
+		ev.LostAttempts = append(ev.LostAttempts, res.Claimed.Priority)
+	}
+	c.cfg.OnClaim(ev)
+}
+
+func dueAt(n notification.Notification) time.Time {
+	if n.ScheduledAt != nil {
+		return *n.ScheduledAt
+	}
+	return n.CreatedAt
 }
 
 // completion turns a send's result into the row update (D-010).
