@@ -142,6 +142,8 @@ type channelLoop struct {
 	cfg     Config
 	picker  *Picker // used by the dispatcher goroutine only
 
+	claimErrors int // consecutive failed claims; dispatcher goroutine only
+
 	slots   chan struct{} // one entry per busy sender
 	senders sync.WaitGroup
 
@@ -200,11 +202,15 @@ func (c *channelLoop) dispatchOne(ctx, sendCtx context.Context) bool {
 	if err != nil {
 		done(ErrNothingClaimed)
 		if ctx.Err() == nil {
-			c.logger.ErrorContext(ctx, "claim failed", "error", err)
-			sleep(ctx, c.cfg.PollInterval)
+			c.claimErrors++
+			wait := c.claimErrorBackoff()
+			c.logger.ErrorContext(ctx, "claim failed", "error", err,
+				"consecutive_errors", c.claimErrors, "retry_in", wait.String())
+			sleep(ctx, wait)
 		}
 		return false
 	}
+	c.claimErrors = 0 // any successful claim, with or without a row
 	if res.Claimed == nil {
 		done(ErrNothingClaimed)
 		sleep(ctx, c.cfg.PollInterval)
@@ -335,6 +341,20 @@ func (c *channelLoop) completion(n notification.Notification, class retry.Class,
 		comp.Status = notification.StatusFailed
 	}
 	return comp
+}
+
+// maxClaimErrorBackoff caps the sleep after consecutive claim errors.
+const maxClaimErrorBackoff = 5 * time.Second
+
+// claimErrorBackoff doubles the sleep from POLL_INTERVAL with each
+// consecutive claim error, up to 5 s, so a database outage doesn't produce
+// an error line every poll (R-M3).
+func (c *channelLoop) claimErrorBackoff() time.Duration {
+	d := c.cfg.PollInterval
+	for i := 1; i < c.claimErrors && d < maxClaimErrorBackoff; i++ {
+		d *= 2
+	}
+	return min(d, maxClaimErrorBackoff)
 }
 
 func (c *channelLoop) pause(d time.Duration) {

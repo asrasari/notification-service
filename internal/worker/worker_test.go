@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 
@@ -32,6 +33,8 @@ type fakeStore struct {
 	// next returns the row for a claim, or nil when nothing is due.
 	next        func(order []notification.Priority) *notification.Notification
 	completeErr error
+	// claimErr, if set, makes claim number i (from 0) fail.
+	claimErr func(i int) error
 }
 
 func (s *fakeStore) Claim(_ context.Context, _ notification.Channel, order []notification.Priority) (postgres.ClaimResult, error) {
@@ -39,6 +42,11 @@ func (s *fakeStore) Claim(_ context.Context, _ notification.Channel, order []not
 	defer s.mu.Unlock()
 	s.claims = append(s.claims, append([]notification.Priority(nil), order...))
 	s.claimedAt = append(s.claimedAt, time.Now())
+	if s.claimErr != nil {
+		if err := s.claimErr(len(s.claims) - 1); err != nil {
+			return postgres.ClaimResult{}, err
+		}
+	}
 	if s.next == nil {
 		return postgres.ClaimResult{}, nil
 	}
@@ -280,6 +288,43 @@ func TestEmptyQueuePollsAndReportsNothingClaimed(t *testing.T) {
 		}
 		if n := len(h.sender.times()); n != 0 {
 			t.Errorf("%d sends from an empty queue", n)
+		}
+	})
+}
+
+// TestClaimErrorsBackOff: consecutive claim errors double the sleep from
+// POLL_INTERVAL up to 5 s; a successful claim resets it (R-M3).
+func TestClaimErrorsBackOff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newHarness(testCfg, nil)
+		h.store.claimErr = func(i int) error {
+			if i <= 5 || i == 7 { // claim 6 succeeds (empty queue)
+				return errors.New("connection refused")
+			}
+			return nil
+		}
+		h.runFor(12 * time.Second)
+
+		_, at, _ := h.store.snapshot()
+		if len(at) < 10 {
+			t.Fatalf("%d claims", len(at))
+		}
+		var gaps []time.Duration
+		for i := 1; i < 10; i++ {
+			gaps = append(gaps, at[i].Sub(at[i-1]))
+		}
+		ms := time.Millisecond
+		want := []time.Duration{200 * ms, 400 * ms, 800 * ms, 1600 * ms, 3200 * ms, 5000 * ms, 200 * ms, 200 * ms, 200 * ms}
+		if diff := cmp.Diff(want, gaps); diff != "" {
+			t.Errorf("gaps between claims (-want +got):\n%s", diff)
+		}
+		for i, d := range h.breaker.results() {
+			if !errors.Is(d, ErrNothingClaimed) {
+				t.Errorf("breaker result %d = %v, want ErrNothingClaimed", i, d)
+			}
+		}
+		if !strings.Contains(h.logs.String(), `"consecutive_errors":6,"retry_in":"5s"`) {
+			t.Errorf("logs lack the capped backoff:\n%s", h.logs.String())
 		}
 	})
 }

@@ -131,7 +131,7 @@ func run(ctx context.Context) error {
 	case <-runDone:
 		timeout.Stop()
 	case <-timeout.C:
-		logger.Warn("shutdown timeout reached; cancelling in-flight sends (their leases expire and they are retried)")
+		logger.Warn("shutdown timeout reached; cancelling in-flight sends: each is written now as an unknown attempt and retried later (failed if it was the last attempt)")
 		cancelSends()
 		<-runDone
 	}
