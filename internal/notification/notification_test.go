@@ -100,7 +100,7 @@ func TestPriorityMapping(t *testing.T) {
 			}
 		})
 	}
-	if !(PriorityHigh < PriorityNormal && PriorityNormal < PriorityLow) {
+	if PriorityHigh >= PriorityNormal || PriorityNormal >= PriorityLow {
 		t.Error("ascending smallint order must put high first")
 	}
 	for _, bad := range []string{"", "HIGH", "urgent", "1"} {

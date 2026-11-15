@@ -55,7 +55,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // nothing to do about a close error at exit
 
 	p, err := migrations.NewProvider(db)
 	if err != nil {

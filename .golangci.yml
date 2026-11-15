@@ -1,0 +1,21 @@
+# golangci-lint v2 configuration (D-022). The same pinned version runs in CI
+# and in `make lint`.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - unused
+    - ineffassign
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  # Show every finding, not only the first few of each kind.
+  max-issues-per-linter: 0
+  max-same-issues: 0

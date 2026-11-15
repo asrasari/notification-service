@@ -79,7 +79,10 @@ func run(m *testing.M) int {
 	if keep {
 		// Ryuk, testcontainers' reaper, would remove the container when the
 		// test binary exits. It reads this variable on first use, which is below.
-		os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
+			fmt.Fprintf(os.Stderr, "testdb: %v\n", err)
+			return 1
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -158,7 +161,7 @@ func migrate(ctx context.Context, dsn string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // only the template connection; nothing to do on error
 	p, err := migrations.NewProvider(db)
 	if err != nil {
 		return err

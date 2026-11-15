@@ -61,7 +61,8 @@ type batch struct {
 	ids      []string
 }
 
-func run(ctx context.Context, cfg config, out io.Writer) error {
+func run(ctx context.Context, cfg config, w io.Writer) error {
+	out := &report{w: w}
 	ctx, cancel := context.WithTimeout(ctx, cfg.timeout)
 	defer cancel()
 	c := &client{base: cfg.apiURL, http: &http.Client{Timeout: 30 * time.Second}}
@@ -85,14 +86,14 @@ func run(ctx context.Context, cfg config, out io.Writer) error {
 	}
 	created := time.Since(start)
 	total := cfg.perChannel * len(channels)
-	fmt.Fprintf(out, "Load test: %d notifications (%d per channel) through POST /notifications/batch.\n", total, cfg.perChannel)
-	fmt.Fprintf(out, "Per channel the low ones were created first and the high ones last (%v); all created in %dms.\n\n",
+	out.printf("Load test: %d notifications (%d per channel) through POST /notifications/batch.\n", total, cfg.perChannel)
+	out.printf("Per channel the low ones were created first and the high ones last (%v); all created in %dms.\n\n",
 		splitLabel(split), created.Milliseconds())
 
 	if err := c.waitAllSent(ctx, batches); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "All %d sent %.1fs after the first batch.\n\n", total, time.Since(start).Seconds())
+	out.printf("All %d sent %.1fs after the first batch.\n\n", total, time.Since(start).Seconds())
 
 	stats, err := c.providerStats(ctx, cfg.statsURL)
 	if err != nil {
@@ -103,34 +104,69 @@ func run(ctx context.Context, cfg config, out io.Writer) error {
 		return err
 	}
 
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintf(tw, "channel\treceived\tthroughput/s\tpeak in any 1s window\tlimit\t\n")
+	tw := out.table()
+	tw.printf("channel\treceived\tthroughput/s\tpeak in any 1s window\tlimit\t\n")
 	var failures []string
 	for _, ch := range channels {
 		s := stats[ch]
-		fmt.Fprintf(tw, "%s\t%d\t%.1f\t%d\t%d\t\n", ch, s.Received, s.throughput(), s.PeakPerSecond, cfg.rateLimit)
+		tw.printf("%s\t%d\t%.1f\t%d\t%d\t\n", ch, s.Received, s.throughput(), s.PeakPerSecond, cfg.rateLimit)
 		if s.PeakPerSecond > cfg.rateLimit {
 			failures = append(failures, fmt.Sprintf("%s peaked at %d/s, above the limit of %d", ch, s.PeakPerSecond, cfg.rateLimit))
 		}
 	}
-	tw.Flush()
-	fmt.Fprintf(out, "(measured by the fake provider as requests arrive; the worker paces at 99%% of the limit)\n\n")
+	out.flush(tw)
+	out.printf("(measured by the fake provider as requests arrive; the worker paces at 99%% of the limit)\n\n")
 
-	tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintf(tw, "priority\tcount\tp50\tp95\t\n")
+	tw = out.table()
+	tw.printf("priority\tcount\tp50\tp95\t\n")
 	for _, p := range slices.Backward(priorities) {
 		l := latencies[p]
-		fmt.Fprintf(tw, "%s\t%d\t%.1fs\t%.1fs\t\n", p, len(l), percentile(l, 50).Seconds(), percentile(l, 95).Seconds())
+		tw.printf("%s\t%d\t%.1fs\t%.1fs\t\n", p, len(l), percentile(l, 50).Seconds(), percentile(l, 95).Seconds())
 	}
-	tw.Flush()
-	fmt.Fprintf(out, "(delivery latency = sent - created_at, all channels; weights 70/20/10)\n")
+	out.flush(tw)
+	out.printf("(delivery latency = sent - created_at, all channels; weights 70/20/10)\n")
 
 	if len(failures) > 0 {
-		fmt.Fprintf(out, "\nFAIL: %s\n", strings.Join(failures, "; "))
-		return errors.New(strings.Join(failures, "; "))
+		out.printf("\nFAIL: %s\n", strings.Join(failures, "; "))
+		return errors.Join(errors.New(strings.Join(failures, "; ")), out.err)
 	}
-	fmt.Fprintf(out, "\nPASS: every channel's peak is <= %d per second.\n", cfg.rateLimit)
-	return nil
+	out.printf("\nPASS: every channel's peak is <= %d per second.\n", cfg.rateLimit)
+	return out.err
+}
+
+// report writes the result and keeps the first write error, so a broken
+// output is reported once at the end instead of after every line.
+type report struct {
+	w   io.Writer
+	err error
+}
+
+func (r *report) printf(format string, args ...any) {
+	if r.err == nil {
+		_, r.err = fmt.Fprintf(r.w, format, args...)
+	}
+}
+
+// table returns a right-aligned table that writes through r.
+func (r *report) table() *table {
+	return &table{tw: tabwriter.NewWriter(r.w, 0, 0, 2, ' ', tabwriter.AlignRight), r: r}
+}
+
+func (r *report) flush(t *table) {
+	if err := t.tw.Flush(); err != nil && r.err == nil {
+		r.err = err
+	}
+}
+
+type table struct {
+	tw *tabwriter.Writer
+	r  *report
+}
+
+func (t *table) printf(format string, args ...any) {
+	if t.r.err == nil {
+		_, t.r.err = fmt.Fprintf(t.tw, format, args...)
+	}
 }
 
 type client struct {
@@ -158,7 +194,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // read fully below; a close error changes nothing
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
@@ -281,7 +317,7 @@ func (c *client) providerStats(ctx context.Context, url string) (map[string]chan
 	if err != nil {
 		return nil, fmt.Errorf("fake provider stats: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // decoded below; a close error changes nothing
 	var out struct{ Channels map[string]channelStats }
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("fake provider stats: %w", err)

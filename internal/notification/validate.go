@@ -128,8 +128,8 @@ func (r Request) validate(prefix string) (Draft, FieldErrors) {
 	}
 
 	channelOK := false
-	switch {
-	case r.Channel == "":
+	switch r.Channel {
+	case "":
 		add("channel", "is required")
 	default:
 		c, err := ParseChannel(r.Channel)

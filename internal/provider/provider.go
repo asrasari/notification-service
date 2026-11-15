@@ -144,7 +144,7 @@ func (c *Client) send(ctx context.Context, m Message) Response {
 		}
 		return Response{Result: retry.Result{Transport: t}, Err: stripURL(err)}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }() // the body was drained above; a close error changes nothing
 
 	// The status is what counts; the body is read only for the messageId, so
 	// a failure to read it doesn't change the outcome.

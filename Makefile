@@ -1,4 +1,4 @@
-.PHONY: help up down logs test test-short load build
+.PHONY: help up down logs test test-short lint load build
 
 # testcontainers needs two variables when Colima is the active Docker context
 # (D-017): DOCKER_HOST points at Colima's socket, and the socket override is
@@ -28,6 +28,15 @@ test: ## Run every test with the race detector (needs Docker for the Postgres te
 
 test-short: ## Run the unit tests only (no Docker)
 	go test -short ./...
+
+# The linter version is pinned here only; CI runs `make lint` too.
+GOLANGCI_LINT_VERSION := v2.15.0
+
+lint: ## Run golangci-lint (the CI version) in Docker
+	docker run --rm -v "$(CURDIR)":/src -w /src \
+		-v notification-service-golangci-cache:/root/.cache \
+		-v notification-service-gomod-cache:/go/pkg/mod \
+		golangci/golangci-lint:$(GOLANGCI_LINT_VERSION) golangci-lint run ./...
 
 load: ## Load test: 3,000 notifications against a fake provider in an isolated stack
 	./loadtest/run.sh

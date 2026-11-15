@@ -151,7 +151,7 @@ func (e *e2e) create(body string) string {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	var n map[string]any
 	_ = json.NewDecoder(res.Body).Decode(&n)
 	if res.StatusCode != http.StatusCreated {
@@ -182,7 +182,7 @@ func (e *e2e) get(id string) notificationJSON {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	var n notificationJSON
 	if err := json.NewDecoder(res.Body).Decode(&n); err != nil {
 		e.t.Fatal(err)
@@ -356,7 +356,7 @@ senders_busy{channel="sms"} 0
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close()
 	for _, s := range []string{
 		`notifications_created_total{channel="sms",priority="high"} 1`,
 		`http_requests_total{method="POST",route="POST /notifications",status="201"} 1`,

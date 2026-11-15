@@ -99,7 +99,7 @@ func (e *env) send(req *http.Request) response {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		e.t.Fatal(err)

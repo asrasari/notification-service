@@ -171,7 +171,9 @@ func TestSendConnectionRefusedIsNotSent(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := "http://" + ln.Addr().String() + "/secret-token"
-	ln.Close() // nothing listens there any more
+	if err := ln.Close(); err != nil { // nothing listens there any more
+		t.Fatal(err)
+	}
 
 	res := newClient(addr, time.Second).Send(context.Background(), msg)
 	if res.Result.Transport != retry.TransportNotSent || retry.Classify(res.Result) != retry.ClassTransient {
@@ -205,7 +207,7 @@ func TestSendCutConnectionIsUnknown(t *testing.T) {
 				}
 				_, _ = buf.WriteString(reply)
 				_ = buf.Flush()
-				conn.Close()
+				_ = conn.Close() // the point is to cut the connection
 			}))
 			defer srv.Close()
 
