@@ -45,6 +45,9 @@ func TestUpDownUp(t *testing.T) {
 		t.Fatalf("initial down: %v", err)
 	}
 
+	tables := []string{"notifications", "delivery_attempts"}
+	listIndexes := []string{"notifications_created_idx", "notifications_status_created_idx"} // 00002
+
 	up := func(step string) {
 		t.Helper()
 		if _, err := p.Up(ctx); err != nil {
@@ -57,14 +60,29 @@ func TestUpDownUp(t *testing.T) {
 		if v != latest {
 			t.Fatalf("%s: version %d, want %d", step, v, latest)
 		}
-		for _, table := range []string{"notifications", "delivery_attempts"} {
-			if !tableExists(ctx, t, db, table) {
-				t.Fatalf("%s: table %s missing after up", step, table)
+		for _, name := range append(tables, listIndexes...) {
+			if !relationExists(ctx, t, db, name) {
+				t.Fatalf("%s: %s missing after up", step, name)
 			}
 		}
 	}
 
 	up("first up")
+
+	// One step down removes only 00002's indexes.
+	if _, err := p.DownTo(ctx, 1); err != nil {
+		t.Fatalf("down to 1: %v", err)
+	}
+	for _, name := range listIndexes {
+		if relationExists(ctx, t, db, name) {
+			t.Fatalf("index %s still exists after down to 1", name)
+		}
+	}
+	for _, name := range tables {
+		if !relationExists(ctx, t, db, name) {
+			t.Fatalf("table %s missing after down to 1", name)
+		}
+	}
 
 	if _, err := p.DownTo(ctx, 0); err != nil {
 		t.Fatalf("down: %v", err)
@@ -72,21 +90,22 @@ func TestUpDownUp(t *testing.T) {
 	if v, err := p.GetDBVersion(ctx); err != nil || v != 0 {
 		t.Fatalf("after down: version %d, err %v; want 0", v, err)
 	}
-	for _, table := range []string{"notifications", "delivery_attempts"} {
-		if tableExists(ctx, t, db, table) {
-			t.Fatalf("table %s still exists after down", table)
+	for _, name := range tables {
+		if relationExists(ctx, t, db, name) {
+			t.Fatalf("table %s still exists after down", name)
 		}
 	}
 
 	up("second up")
 }
 
-func tableExists(ctx context.Context, t *testing.T, db *sql.DB, name string) bool {
+// relationExists reports whether a table or index called name exists.
+func relationExists(ctx context.Context, t *testing.T, db *sql.DB, name string) bool {
 	t.Helper()
 	var exists bool
 	err := db.QueryRowContext(ctx, `SELECT to_regclass('public.' || $1) IS NOT NULL`, name).Scan(&exists)
 	if err != nil {
-		t.Fatalf("check table %s: %v", name, err)
+		t.Fatalf("check relation %s: %v", name, err)
 	}
 	return exists
 }
