@@ -40,6 +40,8 @@ services:
   api:
     <<: *app
     command: ["/usr/local/bin/api"]
+    # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight work finishes before Docker kills it.
+    stop_grace_period: 30s
     ports:
       - "8080:8080"
     depends_on:
@@ -51,6 +53,8 @@ services:
   worker:
     <<: *app
     command: ["/usr/local/bin/worker"]
+    # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight sends finish before Docker kills it.
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
