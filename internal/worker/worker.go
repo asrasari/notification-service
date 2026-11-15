@@ -59,7 +59,7 @@ type Config struct {
 	Weights            [3]int        // high, normal, low (D-006)
 	Backoff            retry.Backoff
 	RetryAfterCap      time.Duration // RETRY_AFTER_CAP
-	BreakerOpenTimeout time.Duration // requeue delay after a config error (R-M1 Q-004)
+	BreakerOpenTimeout time.Duration // requeue delay after a config error (D-010)
 	// OnAttempt, if set, is called after every send's result is written (or
 	// discarded): the hook for the attempt, result, send-duration and
 	// delivery-latency metrics. The worker itself imports no metrics library.
@@ -92,7 +92,7 @@ type ClaimEvent struct {
 	// exhausted one).
 	LostAttempts []notification.Priority
 	// Exhausted are the priorities of rows failed inside the claim because
-	// their last attempt's lease expired (R-M3).
+	// their last attempt's lease expired (D-010).
 	Exhausted []notification.Priority
 }
 
@@ -407,7 +407,7 @@ const maxClaimErrorBackoff = 5 * time.Second
 
 // claimErrorBackoff doubles the sleep from POLL_INTERVAL with each
 // consecutive claim error, up to 5 s, so a database outage doesn't produce
-// an error line every poll (R-M3).
+// an error line every poll (D-007).
 func (c *channelLoop) claimErrorBackoff() time.Duration {
 	d := c.cfg.PollInterval
 	for i := 1; i < c.claimErrors && d < maxClaimErrorBackoff; i++ {

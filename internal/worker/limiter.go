@@ -3,7 +3,7 @@ package worker
 import "golang.org/x/time/rate"
 
 // PacingFactor is the share of the provider's limit that the token bucket
-// actually runs at (R-M5, amends D-007).
+// actually runs at (D-007).
 //
 // The limiter controls when sends start. Each send then spends a few
 // milliseconds in the claim transaction and on the network, and that time

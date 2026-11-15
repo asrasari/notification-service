@@ -194,6 +194,8 @@ curl localhost:8081/health     # worker liveness
 
 ## Key design decisions
 
+The ten that shape the system most. Every decision referenced as `D-0xx` in the code is listed in [docs/decisions.md](docs/decisions.md).
+
 1. **PostgreSQL is the only datastore and the queue.**
    - *Why:* the notification and its queue entry are one row, so there is no dual write and no outbox. 300 msg/s is easy for Postgres, and `SKIP LOCKED`, partial indexes and conditional updates give a reliable queue in one small file we control.
    - *If different:* a separate `jobs` table or Kafka/SQS at much higher volume. We skipped job libraries like River because they bring their own retry logic.

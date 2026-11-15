@@ -30,7 +30,7 @@ func (m *Worker) OnAttempt(e worker.AttemptEvent) {
 
 // OnClaim records one claim transaction (worker.Config.OnClaim): its
 // duration, the unknown attempts recorded for expired leases, and the rows
-// failed because their last lease expired (R-M3).
+// failed because their last lease expired (D-015).
 func (m *Worker) OnClaim(e worker.ClaimEvent) {
 	ch := string(e.Channel)
 	m.ClaimDuration(ch, e.Duration)

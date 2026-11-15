@@ -266,7 +266,7 @@ func TestValidateBatch(t *testing.T) {
 }
 
 func TestDraftHashUsesDefaults(t *testing.T) {
-	// Q-002: the default priority is applied before hashing, so omitting
+	// D-009: the default priority is applied before hashing, so omitting
 	// priority and sending "normal" are the same request.
 	a, _ := Request{Recipient: "+905551234567", Channel: "sms", Content: "x"}.Validate()
 	b, _ := Request{Recipient: "+905551234567", Channel: "sms", Content: "x", Priority: ptr("normal")}.Validate()

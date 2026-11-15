@@ -185,7 +185,7 @@ func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, wm *m
 			},
 		})
 		wm.BreakerState(string(ch), b.State())
-		// Paced just under the provider's limit, burst 1 (D-007, R-M5).
+		// Paced just under the provider's limit, burst 1 (D-007).
 		deps = append(deps, worker.ChannelDeps{Channel: ch, Breaker: b, Limiter: worker.NewLimiter(cfg.RateLimit.PerChannel)})
 	}
 

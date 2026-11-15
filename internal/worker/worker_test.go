@@ -299,7 +299,7 @@ func TestEmptyQueuePollsAndReportsNothingClaimed(t *testing.T) {
 }
 
 // TestClaimErrorsBackOff: consecutive claim errors double the sleep from
-// POLL_INTERVAL up to 5 s; a successful claim resets it (R-M3).
+// POLL_INTERVAL up to 5 s; a successful claim resets it (D-007).
 func TestClaimErrorsBackOff(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(testCfg, nil)
@@ -361,7 +361,7 @@ func TestClaimsFollowWRR(t *testing.T) {
 }
 
 // TestRateLimitEvenlySpaced is the D-007 synctest, at the paced rate
-// (R-M5): endless work for 10 fake seconds with a provider limit of 100/s.
+// (D-007): endless work for 10 fake seconds with a provider limit of 100/s.
 // The limiter runs at 99/s, so: at most 1 + 99 × 10 = 991 sends, each at
 // least 1/99 s after the previous one, and never more than 100 in any
 // 1-second window.

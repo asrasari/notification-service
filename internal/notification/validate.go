@@ -53,7 +53,7 @@ type Request struct {
 
 // Draft is a validated request, ready to be stored: channel and priority are
 // parsed and the default priority is applied. Fields hold exactly what the
-// client sent; nothing is trimmed or reformatted (D-011, Q-002).
+// client sent; nothing is trimmed or reformatted (D-011, D-009).
 type Draft struct {
 	Channel        Channel
 	Recipient      string

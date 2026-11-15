@@ -25,7 +25,7 @@ func (e *SendError) Error() string {
 
 func (e *SendError) Unwrap() error { return e.Err }
 
-// IsExcluded is the breaker's IsExcluded rule (D-010, R-M1 Q-003): results
+// IsExcluded is the breaker's IsExcluded rule (D-010): results
 // that say nothing about the provider's health. Permanent errors are about
 // one message, a 429 is the provider asking us to slow down (handled by the
 // channel pause), and an empty claim sent nothing. Config errors (3xx, 401,

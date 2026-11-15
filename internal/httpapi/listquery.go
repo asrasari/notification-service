@@ -86,7 +86,7 @@ func parseListQuery(q url.Values) (postgres.ListFilter, []notification.FieldErro
 		}
 	}
 	// The range is [created_from, created_to); an empty or reversed one is a
-	// client mistake, not an empty page (R-M2).
+	// client mistake, not an empty page (D-014).
 	if f.CreatedFrom != nil && f.CreatedTo != nil && !f.CreatedFrom.Before(*f.CreatedTo) {
 		add("created_to", "must be after created_from")
 	}

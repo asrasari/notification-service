@@ -45,7 +45,7 @@ type ClaimResult struct {
 	// Reclaimed is true when Claimed came from an expired lease.
 	Reclaimed bool
 	// Exhausted lists expired-lease rows that had no attempts left and were
-	// failed on the way (R-M1).
+	// failed on the way (D-010).
 	Exhausted []notification.Notification
 }
 
@@ -60,7 +60,7 @@ type ClaimResult struct {
 //
 // An expired lease is reclaimed directly (processing → processing) and its
 // lost attempt recorded as unknown. If that attempt was the last one, the row
-// is failed instead and the probe continues (R-M1), so attempts never pass
+// is failed instead and the probe continues (D-010), so attempts never pass
 // max_attempts.
 func (q *Queue) Claim(ctx context.Context, channel notification.Channel, priorities []notification.Priority) (ClaimResult, error) {
 	var res ClaimResult
@@ -180,13 +180,13 @@ type Completion struct {
 	// channel-wide outcome returned to pending (D-010 §2).
 	RefundAttempt bool
 	// Delay sets available_at = now() + Delay when Status is pending: the
-	// backoff, the 429 pause or BREAKER_OPEN_TIMEOUT (R-M1 Q-004).
+	// backoff, the 429 pause or BREAKER_OPEN_TIMEOUT (D-010).
 	Delay time.Duration
 	// ProviderMessageID is stored when Status is sent.
 	ProviderMessageID *string
 	// Attempt is the delivery_attempts row. Its Error also becomes
 	// last_error; a sent row gets last_error = NULL instead, since the
-	// attempt history keeps every error (R-M3).
+	// attempt history keeps every error (D-010).
 	Attempt notification.Attempt
 }
 
@@ -214,7 +214,7 @@ func (q *Queue) Complete(ctx context.Context, c Completion) error {
 	}
 
 	// http_status is NULL outside 100–599 (the column CHECK); the raw code
-	// goes into the error text instead (R-M1 Q-005).
+	// goes into the error text instead (D-010).
 	httpStatus, attemptErr := c.Attempt.HTTPStatus, c.Attempt.Error
 	if httpStatus != nil && (*httpStatus < 100 || *httpStatus > 599) {
 		msg := fmt.Sprintf("provider answered with invalid HTTP status %d", *httpStatus)
