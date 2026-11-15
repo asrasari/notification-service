@@ -1,11 +1,12 @@
 name: notification-service
 
-# Shared settings for the three services built from the one image (D-004).
+# Shared settings for the three services that run the one image (D-004).
+# Only migrate builds it; api and worker reuse the same tag (D-020).
 # Values in .env (optional) are loaded first; `environment` below overrides
 # them, so DATABASE_URL always points at the compose Postgres.
 x-app: &app
-  build: .
   image: notification-service:local
+  pull_policy: never
   env_file:
     - path: .env
       required: false
@@ -19,8 +20,8 @@ services:
       POSTGRES_USER: notifications
       POSTGRES_PASSWORD: notifications
       POSTGRES_DB: notifications
-    ports:
-      - "5432:5432"
+    # Not published to the host: use `docker compose exec postgres psql -U
+    # notifications`. Tests start their own Postgres (testcontainers).
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,6 +32,7 @@ services:
 
   migrate:
     <<: *app
+    build: .
     command: ["/usr/local/bin/migrate", "up"]
     restart: "no"
     depends_on:
@@ -43,7 +45,7 @@ services:
     # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight work finishes before Docker kills it.
     stop_grace_period: 30s
     ports:
-      - "8080:8080"
+      - "${API_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,9 +57,9 @@ services:
     command: ["/usr/local/bin/worker"]
     # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight sends finish before Docker kills it.
     stop_grace_period: 30s
-    # The worker's own HTTP server: GET /health (liveness); /metrics in M4.
+    # The worker's own HTTP server: GET /health (liveness) and GET /metrics.
     ports:
-      - "8081:8081"
+      - "${WORKER_PORT:-8081}:8081"
     depends_on:
       postgres:
         condition: service_healthy
