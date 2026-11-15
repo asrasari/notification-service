@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/time/rate"
 
 	"github.com/asrasari/notification-service/internal/breaker"
 	"github.com/asrasari/notification-service/internal/config"
@@ -183,10 +182,8 @@ func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, wm *m
 			},
 		})
 		wm.BreakerState(string(ch), b.State())
-		// Burst 1: sends are evenly spaced, never more than the rate in any
-		// one-second window (D-007).
-		limiter := rate.NewLimiter(rate.Limit(cfg.RateLimit.PerChannel), 1)
-		deps = append(deps, worker.ChannelDeps{Channel: ch, Breaker: b, Limiter: limiter})
+		// Paced just under the provider's limit, burst 1 (D-007, R-M5).
+		deps = append(deps, worker.ChannelDeps{Channel: ch, Breaker: b, Limiter: worker.NewLimiter(cfg.RateLimit.PerChannel)})
 	}
 
 	w := cfg.Queue.PriorityWeights

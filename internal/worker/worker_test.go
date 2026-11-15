@@ -360,21 +360,37 @@ func TestClaimsFollowWRR(t *testing.T) {
 	})
 }
 
-// TestRateLimitEvenlySpaced is the D-007 synctest: endless work for 10 fake
-// seconds gives at most 1001 sends, 10 ms apart.
+// TestRateLimitEvenlySpaced is the D-007 synctest, at the paced rate
+// (R-M5): endless work for 10 fake seconds with a provider limit of 100/s.
+// The limiter runs at 99/s, so: at most 1 + 99 × 10 = 991 sends, each at
+// least 1/99 s after the previous one, and never more than 100 in any
+// 1-second window.
 func TestRateLimitEvenlySpaced(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := newHarness(testCfg, rate.NewLimiter(rate.Limit(100), 1))
+		const providerLimit = 100
+		h := newHarness(testCfg, NewLimiter(providerLimit))
 		h.store.next = endless
 		h.runFor(10 * time.Second)
 
 		sent := h.sender.times()
-		if len(sent) > 1001 || len(sent) < 990 {
-			t.Fatalf("%d sends in 10s at 100/s, want 990–1001", len(sent))
+		if len(sent) > 991 || len(sent) < 985 {
+			t.Fatalf("%d sends in 10s at 99/s, want 985–991", len(sent))
 		}
+		paced := float64(providerLimit) * PacingFactor
+		spacing := time.Duration(float64(time.Second) / paced) // ~10.101 ms
 		for i := 1; i < len(sent); i++ {
-			if gap := sent[i].Sub(sent[i-1]); gap < 10*time.Millisecond-time.Microsecond {
-				t.Fatalf("send %d came %v after the previous one, want >= 10ms", i, gap)
+			if gap := sent[i].Sub(sent[i-1]); gap < spacing-time.Microsecond {
+				t.Fatalf("send %d came %v after the previous one, want >= %v", i, gap, spacing)
+			}
+		}
+		// The exact bound: no half-open window (t-1s, t] holds more than the limit.
+		for i := range sent {
+			j := i
+			for j+1 < len(sent) && sent[j+1].Sub(sent[i]) < time.Second {
+				j++
+			}
+			if n := j - i + 1; n > providerLimit {
+				t.Fatalf("%d sends within 1s starting at send %d, want <= %d", n, i, providerLimit)
 			}
 		}
 	})
