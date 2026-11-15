@@ -55,6 +55,9 @@ services:
     command: ["/usr/local/bin/worker"]
     # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight sends finish before Docker kills it.
     stop_grace_period: 30s
+    # The worker's own HTTP server: GET /health (liveness); /metrics in M4.
+    ports:
+      - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
