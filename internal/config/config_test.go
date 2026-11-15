@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,8 @@ func TestLoadDefaults(t *testing.T) {
 		{"BREAKER_MIN_REQUESTS", cfg.Breaker.MinRequests, uint32(20)},
 		{"BREAKER_FAILURE_RATIO", cfg.Breaker.FailureRatio, 0.5},
 		{"BREAKER_OPEN_TIMEOUT", cfg.Breaker.OpenTimeout, 30 * time.Second},
+		{"WORKER_HTTP_ADDR", cfg.Worker.HTTPAddr, ":8081"},
+		{"HEARTBEAT_INTERVAL", cfg.Worker.HeartbeatInterval, 5 * time.Second},
 		{"LOG_LEVEL", cfg.Log.Level, "info"},
 		{"LOG_FORMAT", cfg.Log.Format, "json"},
 	}
@@ -45,6 +48,9 @@ func TestLoadDefaults(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
 		}
+	}
+	if !slices.Equal(cfg.Queue.PriorityWeights, []int{70, 20, 10}) {
+		t.Errorf("PRIORITY_WEIGHTS = %v, want [70 20 10]", cfg.Queue.PriorityWeights)
 	}
 }
 
@@ -81,6 +87,13 @@ func TestLoadValidation(t *testing.T) {
 		{name: "text log format", vars: map[string]string{"LOG_FORMAT": "text", "LOG_LEVEL": "debug"}},
 		{name: "provider URL without scheme", vars: map[string]string{"PROVIDER_URL": "webhook.site/abc"}, wantErr: "PROVIDER_URL must be an absolute http(s) URL"},
 		{name: "provider URL https", vars: map[string]string{"PROVIDER_URL": "https://webhook.site/abc"}},
+		{name: "custom priority weights", vars: map[string]string{"PRIORITY_WEIGHTS": "5,3,1"}},
+		{name: "two priority weights", vars: map[string]string{"PRIORITY_WEIGHTS": "70,30"}, wantErr: "PRIORITY_WEIGHTS must be three positive integers"},
+		{name: "four priority weights", vars: map[string]string{"PRIORITY_WEIGHTS": "1,1,1,1"}, wantErr: "PRIORITY_WEIGHTS"},
+		{name: "zero priority weight", vars: map[string]string{"PRIORITY_WEIGHTS": "70,30,0"}, wantErr: "PRIORITY_WEIGHTS must be three positive integers"},
+		{name: "negative priority weight", vars: map[string]string{"PRIORITY_WEIGHTS": "70,-1,10"}, wantErr: "PRIORITY_WEIGHTS"},
+		{name: "non-integer priority weight", vars: map[string]string{"PRIORITY_WEIGHTS": "70,2.5,10"}, wantErr: `parsing "2.5"`},
+		{name: "zero heartbeat interval", vars: map[string]string{"HEARTBEAT_INTERVAL": "0s"}, wantErr: "HEARTBEAT_INTERVAL"},
 		{name: "unparsable duration", vars: map[string]string{"RETRY_CAP": "ten minutes"}, wantErr: `invalid duration "ten minutes"`},
 	}
 

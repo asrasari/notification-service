@@ -27,6 +27,7 @@ type Config struct {
 	RateLimit RateLimit
 	Retry     Retry
 	Breaker   Breaker
+	Worker    Worker
 	Log       Log
 }
 
@@ -54,6 +55,9 @@ type Queue struct {
 	LeaseDuration     time.Duration `env:"LEASE_DURATION" envDefault:"30s"`
 	PollInterval      time.Duration `env:"POLL_INTERVAL" envDefault:"200ms"`
 	WorkerConcurrency int           `env:"WORKER_CONCURRENCY" envDefault:"50"`
+	// PriorityWeights are the high, normal and low shares of each channel's
+	// claims (D-006).
+	PriorityWeights []int `env:"PRIORITY_WEIGHTS" envDefault:"70,20,10"`
 }
 
 // RateLimit configures the per-channel send rate.
@@ -75,6 +79,13 @@ type Breaker struct {
 	MinRequests  uint32        `env:"BREAKER_MIN_REQUESTS" envDefault:"20"`
 	FailureRatio float64       `env:"BREAKER_FAILURE_RATIO" envDefault:"0.5"`
 	OpenTimeout  time.Duration `env:"BREAKER_OPEN_TIMEOUT" envDefault:"30s"`
+}
+
+// Worker configures the worker process's own HTTP server and heartbeat
+// (D-015 continued).
+type Worker struct {
+	HTTPAddr          string        `env:"WORKER_HTTP_ADDR" envDefault:":8081"`
+	HeartbeatInterval time.Duration `env:"HEARTBEAT_INTERVAL" envDefault:"5s"`
 }
 
 // Log configures the slog logger (D-015).
@@ -140,6 +151,16 @@ func (c Config) Validate() error {
 	if c.Queue.WorkerConcurrency <= 0 {
 		add("WORKER_CONCURRENCY must be positive, got %d", c.Queue.WorkerConcurrency)
 	}
+	if len(c.Queue.PriorityWeights) != 3 {
+		add("PRIORITY_WEIGHTS must be three positive integers (high,normal,low), got %d values", len(c.Queue.PriorityWeights))
+	} else {
+		for _, w := range c.Queue.PriorityWeights {
+			if w <= 0 {
+				add("PRIORITY_WEIGHTS must be three positive integers (high,normal,low), got %v", c.Queue.PriorityWeights)
+				break
+			}
+		}
+	}
 	if c.RateLimit.PerChannel <= 0 {
 		add("RATE_LIMIT_PER_CHANNEL must be positive, got %d", c.RateLimit.PerChannel)
 	}
@@ -166,6 +187,12 @@ func (c Config) Validate() error {
 	}
 	if c.Breaker.OpenTimeout <= 0 {
 		add("BREAKER_OPEN_TIMEOUT must be positive, got %s", c.Breaker.OpenTimeout)
+	}
+	if c.Worker.HTTPAddr == "" {
+		add("WORKER_HTTP_ADDR must not be empty")
+	}
+	if c.Worker.HeartbeatInterval <= 0 {
+		add("HEARTBEAT_INTERVAL must be positive, got %s", c.Worker.HeartbeatInterval)
 	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
