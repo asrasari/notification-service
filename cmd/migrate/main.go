@@ -66,7 +66,7 @@ func run(ctx context.Context, args []string) error {
 	case "up":
 		results, err := p.Up(ctx)
 		for _, r := range results {
-			logger.InfoContext(ctx, "migration applied", "version", r.Source.Version, "file", r.Source.Path, "duration", r.Duration)
+			logger.InfoContext(ctx, "migration applied", "version", r.Source.Version, "file", r.Source.Path, "duration", r.Duration.String())
 		}
 		if err != nil {
 			return fmt.Errorf("migrate up: %w", err)
@@ -74,7 +74,7 @@ func run(ctx context.Context, args []string) error {
 	case "down":
 		r, err := p.Down(ctx)
 		if r != nil {
-			logger.InfoContext(ctx, "migration rolled back", "version", r.Source.Version, "file", r.Source.Path, "duration", r.Duration)
+			logger.InfoContext(ctx, "migration rolled back", "version", r.Source.Version, "file", r.Source.Path, "duration", r.Duration.String())
 		}
 		if err != nil {
 			return fmt.Errorf("migrate down: %w", err)

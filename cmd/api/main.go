@@ -67,7 +67,7 @@ func run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	logger.Info("api shutting down", "timeout", cfg.Server.ShutdownTimeout)
+	logger.Info("api shutting down", "timeout", cfg.Server.ShutdownTimeout.String())
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
