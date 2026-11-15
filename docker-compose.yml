@@ -1,5 +1,17 @@
 name: notification-service
 
+# Shared settings for the three services built from the one image (D-004).
+# Values in .env (optional) are loaded first; `environment` below overrides
+# them, so DATABASE_URL always points at the compose Postgres.
+x-app: &app
+  build: .
+  image: notification-service:local
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgres://notifications:notifications@postgres:5432/notifications?sslmode=disable
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -16,6 +28,34 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+
+  migrate:
+    <<: *app
+    command: ["/usr/local/bin/migrate", "up"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["/usr/local/bin/api"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["/usr/local/bin/worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
