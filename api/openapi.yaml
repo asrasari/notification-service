@@ -241,17 +241,20 @@ paths:
     get:
       tags: [service]
       operationId: getHealth
-      summary: Liveness and database reachability
+      summary: Service health
+      description: >-
+        Checks the database and the workers' heartbeats. `degraded` is still
+        200: restarting the API would not fix a worker or provider problem.
       responses:
         '200':
-          description: The API is up and the database answers.
+          description: The database answers; `status` is `ok` or `degraded`.
           headers:
             X-Correlation-ID: { $ref: '#/components/headers/CorrelationID' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Health' }
         '503':
-          description: The database does not answer.
+          description: The database does not answer (`status` is `down`).
           headers:
             X-Correlation-ID: { $ref: '#/components/headers/CorrelationID' }
           content:
@@ -562,9 +565,46 @@ components:
     Health:
       type: object
       additionalProperties: false
-      required: [status]
+      required: [status, checks]
       properties:
-        status: { type: string, enum: [ok, down] }
+        status:
+          type: string
+          enum: [ok, degraded, down]
+          description: >-
+            `down` (503): the database does not answer. `degraded` (200): no
+            worker has a fresh heartbeat, or a live worker reports a circuit
+            breaker that is not closed or a channel paused by the provider's
+            429. `ok` (200): otherwise.
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database, workers]
+          properties:
+            database: { type: string, enum: [ok, down] }
+            workers:
+              type: object
+              additionalProperties: false
+              required: [live, channels]
+              properties:
+                live:
+                  type: integer
+                  minimum: 0
+                  description: Workers whose heartbeat has not expired.
+                channels:
+                  type: object
+                  description: >-
+                    Per channel, merged over the live workers: the worst
+                    breaker state, and paused if any worker is paused. Empty
+                    when no worker is live.
+                  additionalProperties: { $ref: '#/components/schemas/ChannelHealth' }
+
+    ChannelHealth:
+      type: object
+      additionalProperties: false
+      required: [breaker, paused]
+      properties:
+        breaker: { type: string, enum: [closed, half-open, open] }
+        paused: { type: boolean }
 
     Problem:
       type: object

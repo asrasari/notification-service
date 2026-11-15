@@ -88,3 +88,26 @@ func TestHeartbeatPrunesLongExpiredRows(t *testing.T) {
 		t.Error("a row expired 30 minutes ago was pruned")
 	}
 }
+
+func TestLiveWorkers(t *testing.T) {
+	t.Parallel()
+	_, pool := newStore(t)
+	h := postgres.NewHeartbeats(pool)
+	ctx := context.Background()
+
+	if live, err := h.LiveWorkers(ctx); err != nil || len(live) != 0 {
+		t.Fatalf("no rows: %v, %v", live, err)
+	}
+	if err := h.Beat(ctx, "w-1", 5*time.Second, []byte(`{"sms":{"breaker":"open","paused":true}}`)); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, pool, `INSERT INTO worker_heartbeats (worker_id, expires_at, state) VALUES ('stale', now() - interval '1 second', '{}')`)
+
+	live, err := h.LiveWorkers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 || live[0]["sms"] != (postgres.HeartbeatChannel{Breaker: "open", Paused: true}) {
+		t.Fatalf("live = %+v, want only w-1", live)
+	}
+}

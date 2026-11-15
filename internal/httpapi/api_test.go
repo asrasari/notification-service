@@ -46,7 +46,7 @@ func newEnv(t *testing.T) *env {
 	}
 	reg := metrics.NewRegistry()
 	srv := httptest.NewServer(httpapi.NewHandler(httpapi.Deps{
-		Logger: logger, DB: pool, Store: postgres.NewStore(pool, 6),
+		Logger: logger, DB: pool, Store: postgres.NewStore(pool, 6), Workers: postgres.NewHeartbeats(pool),
 		Metrics: metrics.NewAPI(reg), Registry: reg,
 	}))
 	t.Cleanup(srv.Close)

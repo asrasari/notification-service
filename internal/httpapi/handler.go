@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/asrasari/notification-service/internal/metrics"
+	"github.com/asrasari/notification-service/internal/postgres"
 )
 
 // Pinger reports whether the database is reachable. *pgxpool.Pool satisfies it.
@@ -18,15 +19,24 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// healthPingTimeout bounds the DB check so /health answers quickly even when
-// Postgres hangs.
-const healthPingTimeout = 2 * time.Second
+// Workers reads the live workers' heartbeats; *postgres.Heartbeats
+// implements it.
+type Workers interface {
+	LiveWorkers(ctx context.Context) ([]map[string]postgres.HeartbeatChannel, error)
+}
+
+// healthCheckTimeout bounds the DB checks so /health answers quickly even
+// when Postgres hangs.
+const healthCheckTimeout = 2 * time.Second
 
 // Deps are what the API handler needs.
 type Deps struct {
 	Logger *slog.Logger
 	DB     Pinger
 	Store  Store
+	// Workers feeds /health with the worker heartbeats; nil means no worker
+	// is ever seen (degraded).
+	Workers Workers
 	// Metrics records the API metrics; nil records nothing.
 	Metrics *metrics.API
 	// Registry is served on GET /metrics; nil serves an empty registry.
@@ -44,7 +54,7 @@ func NewHandler(d Deps) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /health", healthHandler(logger, db))
+	mux.Handle("GET /health", healthHandler(logger, db, d.Workers))
 	mux.HandleFunc("POST /notifications", a.createNotification)
 	mux.HandleFunc("POST /notifications/batch", a.createBatch)
 	mux.HandleFunc("GET /notifications", a.listNotifications)
@@ -103,23 +113,89 @@ func (h *headerRecorder) Header() http.Header         { return h.header }
 func (h *headerRecorder) Write(b []byte) (int, error) { return len(b), nil }
 func (h *headerRecorder) WriteHeader(code int)        { h.status = code }
 
+// Health statuses (D-015 continued).
+const (
+	healthOK       = "ok"
+	healthDegraded = "degraded"
+	healthDown     = "down"
+)
+
 type healthResponse struct {
-	Status string `json:"status"`
+	Status string       `json:"status"`
+	Checks healthChecks `json:"checks"`
 }
 
-// healthHandler returns 200 {"status":"ok"} when the database answers a ping
-// and 503 {"status":"down"} otherwise.
-func healthHandler(logger *slog.Logger, db Pinger) http.Handler {
+type healthChecks struct {
+	Database string        `json:"database"` // ok or down
+	Workers  workersHealth `json:"workers"`
+}
+
+type workersHealth struct {
+	Live     int                                  `json:"live"`
+	Channels map[string]postgres.HeartbeatChannel `json:"channels"`
+}
+
+// breakerRank orders breaker states from healthy to worst, to merge the
+// reports of several workers.
+var breakerRank = map[string]int{"closed": 0, "half-open": 1, "open": 2}
+
+// healthHandler reports (D-015 continued):
+//   - 503 "down" when the database does not answer (ping, or the heartbeat
+//     read);
+//   - 200 "degraded" when no worker has a fresh heartbeat, or a fresh worker
+//     reports a breaker that is not closed or a paused channel;
+//   - 200 "ok" otherwise.
+//
+// Degraded stays 200: restarting the API would not fix a worker or provider
+// problem. Channels merge every live worker's report: the worst breaker
+// state, and paused if any worker is paused.
+func healthHandler(logger *slog.Logger, db Pinger, workers Workers) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), healthPingTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 		defer cancel()
 
+		down := healthResponse{Status: healthDown, Checks: healthChecks{
+			Database: healthDown,
+			Workers:  workersHealth{Channels: map[string]postgres.HeartbeatChannel{}},
+		}}
 		if err := db.Ping(ctx); err != nil {
 			logger.WarnContext(r.Context(), "health check: database ping failed", "error", err)
-			writeJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "down"})
+			writeJSON(w, http.StatusServiceUnavailable, down)
 			return
 		}
-		writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
+		var live []map[string]postgres.HeartbeatChannel
+		if workers != nil {
+			var err error
+			if live, err = workers.LiveWorkers(ctx); err != nil {
+				logger.WarnContext(r.Context(), "health check: reading worker heartbeats failed", "error", err)
+				writeJSON(w, http.StatusServiceUnavailable, down)
+				return
+			}
+		}
+
+		res := healthResponse{Status: healthOK, Checks: healthChecks{
+			Database: healthOK,
+			Workers:  workersHealth{Live: len(live), Channels: map[string]postgres.HeartbeatChannel{}},
+		}}
+		if len(live) == 0 {
+			res.Status = healthDegraded
+		}
+		for _, state := range live {
+			for ch, s := range state {
+				merged := res.Checks.Workers.Channels[ch]
+				if merged.Breaker == "" || breakerRank[s.Breaker] > breakerRank[merged.Breaker] {
+					merged.Breaker = s.Breaker
+				}
+				merged.Paused = merged.Paused || s.Paused
+				res.Checks.Workers.Channels[ch] = merged
+			}
+		}
+		for _, s := range res.Checks.Workers.Channels {
+			if s.Breaker != "closed" || s.Paused {
+				res.Status = healthDegraded
+			}
+		}
+		writeJSON(w, http.StatusOK, res)
 	})
 }
 

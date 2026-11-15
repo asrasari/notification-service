@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,4 +50,29 @@ func (h *Heartbeats) Remove(ctx context.Context, workerID string) error {
 		return fmt.Errorf("remove heartbeat: %w", err)
 	}
 	return nil
+}
+
+// HeartbeatChannel is one channel's state as a worker reports it in its
+// heartbeat row.
+type HeartbeatChannel struct {
+	Breaker string `json:"breaker"`
+	Paused  bool   `json:"paused"`
+}
+
+// LiveWorkers returns the reported channel states of every worker whose row
+// has not expired (expires_at > now(), DB clock).
+func (h *Heartbeats) LiveWorkers(ctx context.Context) ([]map[string]HeartbeatChannel, error) {
+	rows, err := h.pool.Query(ctx, `SELECT state FROM worker_heartbeats WHERE expires_at > now() ORDER BY worker_id`)
+	if err != nil {
+		return nil, fmt.Errorf("live workers: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (map[string]HeartbeatChannel, error) {
+		var state map[string]HeartbeatChannel
+		err := row.Scan(&state)
+		return state, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("live workers: %w", err)
+	}
+	return out, nil
 }

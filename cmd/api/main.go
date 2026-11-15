@@ -55,6 +55,7 @@ func run(ctx context.Context) error {
 		Logger:   logger,
 		DB:       pool,
 		Store:    store,
+		Workers:  postgres.NewHeartbeats(pool),
 		Metrics:  metrics.NewAPI(reg),
 		Registry: reg,
 	})
