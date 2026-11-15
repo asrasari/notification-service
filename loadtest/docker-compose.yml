@@ -1,0 +1,74 @@
+# The `make load` stack (D-020 §2): its own compose project and database,
+# no host ports (nothing can clash with the main stack), and no env_file:
+# it never reads .env, and the worker always sends to the fake provider.
+# Run it through loadtest/run.sh, which tears everything down (down -v).
+name: notification-loadtest
+
+x-env: &env
+  DATABASE_URL: postgres://notifications:notifications@postgres:5432/notifications?sslmode=disable
+  LOG_LEVEL: warn
+
+x-app: &app
+  image: notification-service:local
+  pull_policy: never
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: notifications
+      POSTGRES_DB: notifications
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications -d notifications"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *app
+    build: ..
+    command: ["/usr/local/bin/migrate", "up"]
+    environment: *env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  fakeprovider:
+    <<: *app
+    command: ["/usr/local/bin/fakeprovider"]
+    environment:
+      FAKE_LATENCY: 50ms
+      FAKE_FAILURE_RATE: "0"
+
+  api:
+    <<: *app
+    command: ["/usr/local/bin/api"]
+    environment: *env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ["/usr/local/bin/worker"]
+    environment:
+      <<: *env
+      PROVIDER_URL: http://fakeprovider:9090/hook
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      fakeprovider:
+        condition: service_started
+
+  loadtest:
+    <<: *app
+    command: ["/usr/local/bin/loadtest"]
+    environment:
+      API_URL: http://api:8080
+      PROVIDER_STATS_URL: http://fakeprovider:9090/stats
+    depends_on:
+      api:
+        condition: service_started
+      worker:
+        condition: service_started

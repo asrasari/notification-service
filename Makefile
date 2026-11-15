@@ -1,4 +1,4 @@
-.PHONY: build test test-short up down
+.PHONY: build test test-short up down load
 
 # testcontainers needs two variables when Colima is the active Docker context
 # (D-017): DOCKER_HOST points at Colima's socket, and the socket override is
@@ -30,3 +30,9 @@ up:
 # Stop the stack (data in the Postgres volume is kept).
 down:
 	docker compose down
+
+# Load test in an isolated compose project (own database, no host ports,
+# never reads .env): 3,000 notifications against a fake provider, then
+# throughput, peak per second and latency per priority. Always tears down.
+load:
+	./loadtest/run.sh
