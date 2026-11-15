@@ -21,8 +21,8 @@ flowchart LR
     worker -->|claim with lease,<br/>write result| pg
     worker -->|"POST {to, channel, content}<br/>Idempotency-Key"| provider([provider<br/>webhook.site])
     worker -.->|heartbeat row| pg
-    prom([Prometheus<br/>not included]) -.->|GET /metrics| api
-    prom -.->|GET /metrics| worker
+    monitoring([your monitoring<br/>e.g. Prometheus]) -.->|GET /metrics| api
+    monitoring -.->|GET /metrics| worker
     ops([load balancer / ops]) -.->|GET /health| api
     ops -.->|GET /health| worker
 ```
