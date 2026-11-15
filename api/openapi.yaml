@@ -268,7 +268,7 @@ paths:
           description: The OpenAPI document.
           content:
             application/yaml:
-              schema: { type: string }
+              schema: { type: object, description: An OpenAPI 3.0.3 document. }
 
   /docs:
     get:

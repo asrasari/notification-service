@@ -81,6 +81,13 @@ func (e *env) do(method, path, body string, contentType ...string) response {
 	if body != "" && ct != "-" {
 		req.Header.Set("Content-Type", ct)
 	}
+	return e.send(req)
+}
+
+// send performs req and checks the exchange against the spec, so every
+// response in these tests is contract-tested (D-016 §1).
+func (e *env) send(req *http.Request) response {
+	e.t.Helper()
 	resp, err := e.srv.Client().Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -90,7 +97,9 @@ func (e *env) do(method, path, body string, contentType ...string) response {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return response{status: resp.StatusCode, header: resp.Header, body: b}
+	r := response{status: resp.StatusCode, header: resp.Header, body: b}
+	checkContract(e.t, req, r)
+	return r
 }
 
 // want fails unless the response has status, and for errors also checks the
@@ -220,13 +229,7 @@ func TestCreateNotificationErrors(t *testing.T) {
 				// An empty body still carries the content type.
 				req, _ := http.NewRequest("POST", e.srv.URL+"/notifications", strings.NewReader(""))
 				req.Header.Set("Content-Type", tt.contentType)
-				resp, err := e.srv.Client().Do(req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				b, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				r = response{resp.StatusCode, resp.Header, b}
+				r = e.send(req)
 			} else {
 				r = e.do("POST", "/notifications", tt.body, ct...)
 			}
