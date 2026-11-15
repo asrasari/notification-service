@@ -85,7 +85,7 @@ paths:
           schema: { type: string, format: date-time }
         - name: created_to
           in: query
-          description: Exclusive upper bound on `created_at`.
+          description: Exclusive upper bound on `created_at`. When `created_from` is also given, it must be later, or the request is a 422.
           schema: { type: string, format: date-time }
         - name: batch_id
           in: query

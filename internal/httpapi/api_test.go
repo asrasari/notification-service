@@ -334,6 +334,10 @@ func TestListNotifications(t *testing.T) {
 		{"bad values are all reported", "?status=done&channel=fax&limit=0&created_from=yesterday&batch_id=1", 422, "/problems/validation-failed",
 			[]string{"status", "channel", "created_from", "batch_id", "limit"}},
 		{"limit over 200", "?limit=201", 422, "/problems/validation-failed", []string{"limit"}},
+		{"valid created range", "?created_from=2026-11-15T09:00:00Z&created_to=2026-11-15T10:00:00Z", 200, "", nil},
+		{"reversed created range", "?created_from=2026-11-15T10:00:00Z&created_to=2026-11-15T09:00:00Z", 422, "/problems/validation-failed", []string{"created_to"}},
+		{"empty created range", "?created_from=2026-11-15T10:00:00Z&created_to=2026-11-15T10:00:00Z", 422, "/problems/validation-failed", []string{"created_to"}},
+		{"range across offsets", "?created_from=2026-11-15T10:00:00Z&created_to=2026-11-15T12:30:00%2B03:00", 422, "/problems/validation-failed", []string{"created_to"}},
 		{"bad cursor", "?cursor=bm9wZQ", 400, "/problems/malformed-request", nil},
 		{"undecodable cursor", "?cursor=%%%", 400, "/problems/malformed-request", nil},
 	}
