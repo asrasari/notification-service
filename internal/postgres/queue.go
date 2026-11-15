@@ -185,7 +185,8 @@ type Completion struct {
 	// ProviderMessageID is stored when Status is sent.
 	ProviderMessageID *string
 	// Attempt is the delivery_attempts row. Its Error also becomes
-	// last_error, unless Status is sent.
+	// last_error; a sent row gets last_error = NULL instead, since the
+	// attempt history keeps every error (R-M3).
 	Attempt notification.Attempt
 }
 
@@ -243,7 +244,7 @@ func (q *Queue) Complete(ctx context.Context, c Completion) error {
 		    attempts = attempts - $4,
 		    available_at = CASE WHEN $3 = 'pending' THEN now() + $5::interval ELSE available_at END,
 		    lease_token = NULL,
-		    last_error = COALESCE($6, last_error),
+		    last_error = CASE WHEN $3 = 'sent' THEN NULL ELSE COALESCE($6, last_error) END,
 		    provider_message_id = COALESCE($7, provider_message_id),
 		    updated_at = now()
 		WHERE id = $1 AND lease_token = $2 AND status = 'processing'`,

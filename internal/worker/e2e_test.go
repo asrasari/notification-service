@@ -226,8 +226,11 @@ func TestE2ERetryThenSent(t *testing.T) {
 	if got := strings.Join(outcomes(n), ","); got != "transient,success" || n.Attempts != 2 {
 		t.Fatalf("attempts %d, outcomes %s", n.Attempts, got)
 	}
+	if n.LastError != nil {
+		t.Errorf("last_error = %q on a sent notification, want null (the history keeps it)", *n.LastError)
+	}
 	a := n.DeliveryAttempts
-	if *a[0].HTTPStatus != 500 || a[0].AttemptNo != 1 || a[1].AttemptNo != 2 {
+	if a[0].Error == nil || *a[0].HTTPStatus != 500 || a[0].AttemptNo != 1 || a[1].AttemptNo != 2 {
 		t.Errorf("attempts = %+v", a)
 	}
 	// Backoff after attempt 1 with no jitter: limit/2 = base/2.

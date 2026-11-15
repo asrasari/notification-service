@@ -326,6 +326,8 @@ func TestCompleteOutcomes(t *testing.T) {
 
 	t.Run("sent", func(t *testing.T) {
 		id := add(t, s, notification.ChannelSMS, notification.PriorityHigh)
+		// An earlier attempt failed.
+		exec(t, pool, `UPDATE notifications SET last_error = 'provider answered HTTP 500' WHERE id = $1`, id)
 		c := claim(t, q).Claimed
 		complete(t, q, c, postgres.Completion{
 			Status: notification.StatusSent, ProviderMessageID: ptr("m-1"),
@@ -334,6 +336,9 @@ func TestCompleteOutcomes(t *testing.T) {
 		n, attempts := get(t, s, id)
 		if n.Status != notification.StatusSent || n.ProviderMessageID == nil || *n.ProviderMessageID != "m-1" || n.LeaseToken != nil || n.Attempts != 1 {
 			t.Errorf("row = %+v", n)
+		}
+		if n.LastError != nil {
+			t.Errorf("last_error = %q on a sent row, want NULL", *n.LastError)
 		}
 		if len(attempts) != 1 || attempts[0].Outcome != notification.OutcomeSuccess || *attempts[0].HTTPStatus != 202 || *attempts[0].DurationMS != 40 {
 			t.Errorf("attempts = %+v", attempts)
