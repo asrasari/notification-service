@@ -29,7 +29,7 @@ flowchart LR
 
 ## Quick start
 
-You need Docker with Compose v2.
+You need Docker with Compose **v2.24 or newer** (the compose file uses `env_file` with `required: false`). The old hyphenated `docker-compose` (v1) is not supported.
 
 1. **Create a webhook.site URL** (it plays the provider). Open <https://webhook.site>, click **Edit**, and set:
    - **Status code:** `202`
@@ -232,6 +232,8 @@ curl localhost:8081/health     # worker liveness
 **Logs.** JSON via `log/slog`. The API's correlation ID is stored on each notification and put back into the worker's context, so one search follows a notification from the HTTP request to every delivery attempt. Recipients and content are never logged.
 
 ## Testing
+
+`make test` needs **Go 1.27+** and a running Docker. Any Go ≥ 1.21 downloads the 1.27 toolchain automatically (with the default `GOTOOLCHAIN=auto`).
 
 ```sh
 make test        # go test -race ./... — everything; needs a running Docker
