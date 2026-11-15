@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -27,7 +28,7 @@ func newTestHandler(t *testing.T, db Pinger) (http.Handler, *bytes.Buffer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewHandler(logger, db), &buf
+	return NewHandler(logger, db, nil), &buf
 }
 
 func TestHealth(t *testing.T) {
@@ -150,5 +151,24 @@ func TestAccessLog(t *testing.T) {
 				t.Errorf("duration_ms missing: %v", line)
 			}
 		})
+	}
+}
+
+// D-012: every server timeout is set, so a slow client can't hold a
+// connection forever.
+func TestNewServerTimeouts(t *testing.T) {
+	srv := NewServer(":0", http.NotFoundHandler(), nil)
+	for name, d := range map[string]time.Duration{
+		"ReadHeaderTimeout": srv.ReadHeaderTimeout,
+		"ReadTimeout":       srv.ReadTimeout,
+		"WriteTimeout":      srv.WriteTimeout,
+		"IdleTimeout":       srv.IdleTimeout,
+	} {
+		if d <= 0 {
+			t.Errorf("%s is not set", name)
+		}
+	}
+	if srv.ReadHeaderTimeout >= srv.ReadTimeout {
+		t.Errorf("ReadHeaderTimeout %s should be shorter than ReadTimeout %s", srv.ReadHeaderTimeout, srv.ReadTimeout)
 	}
 }

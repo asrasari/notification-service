@@ -19,14 +19,66 @@ type Pinger interface {
 const healthPingTimeout = 2 * time.Second
 
 // NewHandler returns the API's root handler with all routes and middleware.
-//
-// Router: stdlib http.ServeMux until D-012 is decided.
-func NewHandler(logger *slog.Logger, db Pinger) http.Handler {
+// Routing is the stdlib ServeMux with method and {id} patterns (D-012).
+func NewHandler(logger *slog.Logger, db Pinger, store Store) http.Handler {
+	a := &api{logger: logger, store: store}
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", healthHandler(logger, db))
+	mux.HandleFunc("POST /notifications", a.createNotification)
+	mux.HandleFunc("POST /notifications/batch", a.createBatch)
+	mux.HandleFunc("GET /notifications", a.listNotifications)
+	mux.HandleFunc("GET /notifications/{id}", a.getNotification)
+	mux.HandleFunc("POST /notifications/{id}/cancel", a.cancelNotification)
+	mux.HandleFunc("GET /batches/{id}", a.getBatch)
+	mux.HandleFunc("POST /batches/{id}/cancel", a.cancelBatch)
 
-	return withCorrelationID(accessLog(logger, mux))
+	return withCorrelationID(accessLog(logger, jsonFallback(mux)))
 }
+
+// jsonFallback answers unmatched requests with the JSON problem format
+// instead of the mux's plain text (D-012): 404 for an unknown path, 405 with
+// the Allow header for a known path with the wrong method.
+//
+// A catch-all "/" pattern can't do this: it would also match known paths
+// with a wrong method and hide the 405.
+func jsonFallback(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h, pattern := mux.Handler(r)
+		if pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		// Let the mux decide between 404 and 405 (and compute Allow), but
+		// throw its plain-text body away.
+		rec := &headerRecorder{header: http.Header{}, status: http.StatusOK}
+		h.ServeHTTP(rec, r)
+		switch rec.status {
+		case http.StatusMethodNotAllowed:
+			w.Header().Set("Allow", rec.header.Get("Allow"))
+			writeProblem(w, r, problem{Status: http.StatusMethodNotAllowed, Detail: "This path does not support the " + r.Method + " method."})
+		case http.StatusNotFound:
+			notFound(w, r, "No route matches this path.")
+		default:
+			// Redirects for unclean paths (e.g. a trailing slash rule); pass them on.
+			for k, v := range rec.header {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.status)
+		}
+	})
+}
+
+// headerRecorder captures the status and headers of the mux's fallback
+// handler and discards its body.
+type headerRecorder struct {
+	header http.Header
+	status int
+}
+
+func (h *headerRecorder) Header() http.Header         { return h.header }
+func (h *headerRecorder) Write(b []byte) (int, error) { return len(b), nil }
+func (h *headerRecorder) WriteHeader(code int)        { h.status = code }
 
 type healthResponse struct {
 	Status string `json:"status"`

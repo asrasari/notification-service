@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/asrasari/notification-service/internal/config"
 	"github.com/asrasari/notification-service/internal/httpapi"
@@ -48,12 +47,9 @@ func run(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	srv := &http.Server{
-		Addr:              cfg.Server.Addr,
-		Handler:           httpapi.NewHandler(logger, pool),
-		ReadHeaderTimeout: 5 * time.Second,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
-	}
+	store := postgres.NewStore(pool, cfg.Retry.MaxAttempts)
+	srv := httpapi.NewServer(cfg.Server.Addr, httpapi.NewHandler(logger, pool, store),
+		slog.NewLogLogger(logger.Handler(), slog.LevelWarn))
 
 	serveErr := make(chan error, 1)
 	go func() {
