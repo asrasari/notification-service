@@ -1,5 +1,7 @@
 # Notification Service
 
+[![CI](https://github.com/asrasari/notification-service/actions/workflows/ci.yml/badge.svg)](https://github.com/asrasari/notification-service/actions/workflows/ci.yml)
+
 A Go service that accepts SMS, email and push notifications over a REST API and delivers them to an external provider. It can send one at a time or in batches of up to 1,000, at most 100 per second per channel, with three priority levels, retries with backoff and a circuit breaker. Every notification's status and attempt history can be read back. PostgreSQL is the only datastore and also the work queue. The API and the worker are two processes built from one Docker image; both expose Prometheus metrics and a health endpoint.
 
 **Highlights**
@@ -49,7 +51,7 @@ Compose starts Postgres, runs the migrations once, then starts `api` (port 8080)
    A fixed body is fine: the worker stores `messageId` when it is there and counts any 2xx as sent.
 2. Start with your URL: either `cp .env.example .env` and set `PROVIDER_URL` there, or pass it once with `PROVIDER_URL=https://webhook.site/<your-id> docker compose up --build`.
 
-Free webhook.site URLs are slow and rate-limited, so they can't show 100 messages per second; use [`make load`](#load-test) for that. `make` lists every target: `up`, `down`, `logs`, `test`, `test-short`, `load`, `build`.
+Free webhook.site URLs are slow and rate-limited, so they can't show 100 messages per second; use [`make load`](#load-test) for that. `make` lists every target: `up`, `down`, `logs`, `test`, `test-short`, `lint`, `load`, `build`.
 
 ## API walkthrough
 
@@ -260,7 +262,10 @@ The ten that shape the system most. Every decision referenced as `D-0xx` in the 
 ```sh
 make test        # go test -race ./... — everything; needs a running Docker
 make test-short  # unit tests only, no Docker
+make lint        # golangci-lint, pinned, in Docker (no install needed)
 ```
+
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request, in three jobs: `make lint`, `make test` on a clean Linux runner, and `docker build .`. `make load` is not in CI: shared runners add more timing jitter than the rate limiter's 1 % headroom, so it would fail at random.
 
 Integration tests start their own Postgres with testcontainers-go and give each test a fresh database copied from a migrated template, so tests run in parallel and never touch your data. **Colima:** plain `go test` needs `DOCKER_HOST` and `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`; `make test` sets both.
 
@@ -349,4 +354,5 @@ PASS: every channel's peak is <= 100 per second.
 - **Polling.** The worker polls every 200 ms when idle. `LISTEN/NOTIFY` would remove that delay.
 - **One table for messages and the queue.** At very high volume, a separate `jobs` table would keep the hot queue small.
 - **Tracing.** No OpenTelemetry yet; correlation IDs link the logs today.
-- **Not built:** templates, WebSocket status updates, and CI.
+- **No image publishing.** CI builds the image but doesn't push it; a release job would publish it to a registry (e.g. GHCR) with a version tag.
+- **Not built:** templates and WebSocket status updates.

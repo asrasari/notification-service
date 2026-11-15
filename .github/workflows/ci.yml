@@ -1,0 +1,45 @@
+# CI (D-022): lint, test and build on every push to main and every pull
+# request. `make load` is not run here: shared runners add more timing
+# jitter than the rate limiter's 1 % headroom, so it would fail at random.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The same pinned golangci-lint image as a local `make lint`.
+      - run: make lint
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: true
+      # The README's one command. testcontainers uses the runner's Docker;
+      # the Makefile's Colima block stays inactive here.
+      - run: make test
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build .
