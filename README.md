@@ -97,6 +97,23 @@ curl -X POST localhost:8080/notifications -H 'Content-Type: application/json' \
            {"field":"content","message":"is required"}]}
 ```
 
+**Schedule a send.** Add `scheduled_at` (RFC 3339 with an offset) to a single create or to any batch item:
+
+```sh
+# use a time within the next 30 days
+curl -X POST localhost:8080/notifications -H 'Content-Type: application/json' \
+  -d '{"recipient": "+905551234567", "channel": "sms", "content": "Your appointment is tomorrow at 10:00",
+       "scheduled_at": "2026-11-20T09:00:00+03:00"}'
+```
+```json
+{"id":"…", …, "status":"pending","scheduled_at":"2026-11-20T06:00:00Z","attempts":0,"next_attempt_at":"2026-11-20T06:00:00Z", …}
+```
+
+- **Window:** a new notification's time must be no more than 1 minute in the past and at most 30 days ahead, on the server's clock. Otherwise the API returns 422 with `scheduled_at` "must be in the future" or "must be at most 30 days ahead".
+- **Repeats:** a repeat of an accepted request follows the idempotency rules (200, or 409 for a different time), even after its time has passed.
+- **Before it's due:** the notification is `pending` and can be cancelled. It counts as `delayed` in `notification_queue_depth`.
+- **When it's due:** it competes by priority and rate like any other notification. A campaign of 10,000 SMS scheduled for 09:00 drains at the channel rate (~99/s), in about 100 s.
+
 **Batch, list, cancel, status, health, metrics:**
 
 ```sh
@@ -139,7 +156,7 @@ curl localhost:8081/health     # worker liveness
 
 ## How it works
 
-1. **Create.** The API validates the request and inserts one row per notification (`status = pending`, `available_at = now()`, plus the correlation ID). With an `idempotency_key` the insert is `ON CONFLICT DO NOTHING`, and an existing row is compared by request hash: same → 200, different → 409. A batch is one transaction, sorted by key.
+1. **Create.** The API validates the request and inserts one row per notification (`status = pending`, `available_at = now()` or the `scheduled_at` time, plus the correlation ID). With an `idempotency_key` the insert is `ON CONFLICT DO NOTHING`, and an existing row is compared by request hash: same → 200, different → 409. A batch is one transaction, sorted by key.
 2. **Dispatch.** Each channel has one dispatcher and 50 sender goroutines. For every send, the dispatcher:
    1. waits for a free sender;
    2. waits while the channel is paused by a 429;
@@ -327,4 +344,4 @@ PASS: every channel's peak is <= 100 per second.
 - **Polling.** The worker polls every 200 ms when idle. `LISTEN/NOTIFY` would remove that delay.
 - **One table for messages and the queue.** At very high volume, a separate `jobs` table would keep the hot queue small.
 - **Tracing.** No OpenTelemetry yet; correlation IDs link the logs today.
-- **Not built:** templates, WebSocket status updates, scheduled sends (the API refuses `scheduled_at` for now, though the queue already supports a future `available_at`), and CI.
+- **Not built:** templates, WebSocket status updates, and CI.

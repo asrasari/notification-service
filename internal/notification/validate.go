@@ -176,10 +176,13 @@ func (r Request) validate(prefix string) (Draft, FieldErrors) {
 		}
 	}
 
-	// Scheduling is the M6 bonus; until then the field is refused rather than
-	// silently ignored.
+	// scheduled_at is stored in UTC at the database's microsecond precision,
+	// so a replay hashes exactly like the stored row (D-021). Whether the time
+	// is in the allowed window is decided at insert time on the database clock,
+	// and only for rows that would be newly created.
 	if r.ScheduledAt != nil {
-		add("scheduled_at", "scheduled sending is not supported yet")
+		t := r.ScheduledAt.UTC().Truncate(time.Microsecond)
+		d.ScheduledAt = &t
 	}
 
 	if len(errs) > 0 {

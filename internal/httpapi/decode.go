@@ -138,7 +138,7 @@ type createRequestJSON struct {
 	Content        string     `json:"content"`
 	Priority       *string    `json:"priority"`
 	IdempotencyKey *string    `json:"idempotency_key"`
-	ScheduledAt    *time.Time `json:"scheduled_at"` // refused by validation until M6
+	ScheduledAt    *time.Time `json:"scheduled_at"` // RFC 3339 with an offset (D-021)
 }
 
 func (c createRequestJSON) request() notification.Request {

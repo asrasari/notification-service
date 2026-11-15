@@ -222,7 +222,7 @@ func TestCreateNotificationErrors(t *testing.T) {
 		{"array instead of object", `[]`, "", 400, "/problems/malformed-request", nil},
 		{"unknown field", `{"recipient":"+905551234567","channel":"sms","content":"x","colour":"red"}`, "", 422, "/problems/validation-failed", []string{"colour"}},
 		{"all rule violations at once", `{"channel":"sms","content":" ","priority":"urgent"}`, "", 422, "/problems/validation-failed", []string{"recipient", "content", "priority"}},
-		{"scheduled_at is refused", `{"recipient":"+905551234567","channel":"sms","content":"x","scheduled_at":"2030-01-01T00:00:00Z"}`, "", 422, "/problems/validation-failed", []string{"scheduled_at"}},
+		{"scheduled_at without an offset", `{"recipient":"+905551234567","channel":"sms","content":"x","scheduled_at":"2030-01-01T00:00:00"}`, "", 400, "/problems/malformed-request", nil},
 		{"too many SMS segments", fmt.Sprintf(`{"recipient":"+905551234567","channel":"sms","content":%q}`, strings.Repeat("a", 1531)), "", 422, "/problems/validation-failed", []string{"content"}},
 	}
 	for _, tt := range tests {

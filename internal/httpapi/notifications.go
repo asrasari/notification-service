@@ -53,7 +53,11 @@ func (a *handlers) createNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n, created, err := a.store.Create(r.Context(), draft)
+	var sched *postgres.ScheduleError
 	switch {
+	case errors.As(err, &sched):
+		validationFailed(w, r, notification.FieldErrors{{Field: "scheduled_at", Message: scheduleMessage(sched.TooFar)}})
+		return
 	case errors.Is(err, postgres.ErrIdempotencyConflict):
 		writeProblem(w, r, problem{
 			Type:   typeIdempotencyConflict,
@@ -96,8 +100,18 @@ func (a *handlers) createBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.store.CreateBatch(r.Context(), drafts)
-	var conflict *postgres.BatchConflictError
+	var (
+		conflict *postgres.BatchConflictError
+		sched    *postgres.BatchScheduleError
+	)
 	switch {
+	case errors.As(err, &sched):
+		fields := make(notification.FieldErrors, len(sched.Items))
+		for i, it := range sched.Items {
+			fields[i] = notification.FieldError{Field: fmt.Sprintf("items[%d].scheduled_at", it.Index), Message: scheduleMessage(it.TooFar)}
+		}
+		validationFailed(w, r, fields)
+		return
 	case errors.As(err, &conflict):
 		fields := make([]notification.FieldError, len(conflict.Indexes))
 		for i, idx := range conflict.Indexes {
@@ -236,6 +250,14 @@ func (a *handlers) cancelBatch(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, batchCancelJSON{BatchID: id, Cancelled: n})
 	}
+}
+
+// scheduleMessage explains a scheduled_at outside the window (D-021).
+func scheduleMessage(tooFar bool) string {
+	if tooFar {
+		return "must be at most 30 days ahead"
+	}
+	return "must be in the future"
 }
 
 // pathUUID reads the {id} path value; a non-UUID is a 400 (D-016 §3).

@@ -113,7 +113,6 @@ func TestValidateRejects(t *testing.T) {
 	push := func(recipient, content string) Request {
 		return Request{Recipient: recipient, Channel: "push", Content: content}
 	}
-	when := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	tests := []struct {
 		name string
@@ -148,9 +147,6 @@ func TestValidateRejects(t *testing.T) {
 		}},
 		{"256-character idempotency key", valid(func(r *Request) { r.IdempotencyKey = ptr(strings.Repeat("k", 256)) }), FieldErrors{
 			{"idempotency_key", "must be 1 to 255 characters, got 256"},
-		}},
-		{"scheduled_at is not supported yet", valid(func(r *Request) { r.ScheduledAt = &when }), FieldErrors{
-			{"scheduled_at", "scheduled sending is not supported yet"},
 		}},
 
 		// SMS recipients: strict E.164.
@@ -295,5 +291,33 @@ func TestNextAttemptAt(t *testing.T) {
 		} else if got != nil {
 			t.Errorf("%s: NextAttemptAt = %v, want nil", s, got)
 		}
+	}
+}
+
+func TestValidateScheduledAt(t *testing.T) {
+	// +03:00 with nanoseconds: stored as UTC, truncated to microseconds.
+	in := time.Date(2026, 11, 20, 12, 0, 0, 123456789, time.FixedZone("TRT", 3*3600))
+	r := Request{Recipient: "+905551234567", Channel: "sms", Content: "hi", ScheduledAt: &in}
+	d, errs := r.Validate()
+	if errs != nil {
+		t.Fatalf("errors: %v", errs)
+	}
+	want := time.Date(2026, 11, 20, 9, 0, 0, 123456000, time.UTC)
+	if d.ScheduledAt == nil || !d.ScheduledAt.Equal(want) || d.ScheduledAt.Location() != time.UTC {
+		t.Fatalf("ScheduledAt = %v, want %v", d.ScheduledAt, want)
+	}
+	// The same instant written differently hashes the same.
+	other := want.Add(789 * time.Nanosecond).In(time.FixedZone("X", -5*3600))
+	r.ScheduledAt = &other
+	d2, _ := r.Validate()
+	if string(d.Hash()) != string(d2.Hash()) {
+		t.Error("the same instant in another zone and with extra nanoseconds hashes differently")
+	}
+	// A different time is a different request.
+	later := in.Add(time.Second)
+	r.ScheduledAt = &later
+	d3, _ := r.Validate()
+	if string(d.Hash()) == string(d3.Hash()) {
+		t.Error("a different scheduled_at hashes the same")
 	}
 }

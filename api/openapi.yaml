@@ -421,6 +421,19 @@ components:
           minLength: 1
           maxLength: 255
           description: Optional. Repeating a request with the same key and content is safe. Keys are global.
+        scheduled_at:
+          type: string
+          format: date-time
+          example: '2026-11-20T09:00:00+03:00'
+          description: |
+            Optional. Send at this time instead of now. RFC 3339 with an
+            offset (`Z` or `+03:00`); stored in UTC, to the microsecond.
+            For a new notification it must be no more than 1 minute in the
+            past (clock-skew grace) and at most 30 days ahead, on the
+            server's clock; otherwise 422. A repeat of an already accepted
+            request is answered by the idempotency rules (200 or 409), even
+            after its time has passed. Part of the request hash: the same
+            key with a different time is a 409.
 
     BatchRequest:
       type: object

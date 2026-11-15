@@ -7,6 +7,7 @@ package worker_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -456,4 +457,20 @@ func sampleCount(t *testing.T, g prometheus.Gatherer, name string) uint64 {
 		}
 	}
 	return n
+}
+
+func TestE2EScheduledSend(t *testing.T) {
+	t.Parallel()
+	e := start(t, reply(http.StatusAccepted))
+	at := time.Now().Add(1500 * time.Millisecond).UTC().Truncate(time.Millisecond)
+	id := e.create(fmt.Sprintf(`{"recipient":"+905551234567","channel":"sms","content":"Later","scheduled_at":%q}`, at.Format(time.RFC3339Nano)))
+
+	time.Sleep(700 * time.Millisecond)
+	if n := e.get(id); n.Status != "pending" || len(n.DeliveryAttempts) != 0 {
+		t.Fatalf("before its time: status %s, %d attempts; want pending, none", n.Status, len(n.DeliveryAttempts))
+	}
+	n := e.waitFor(id, "sent")
+	if started := n.DeliveryAttempts[0].StartedAt; started.Before(at) {
+		t.Errorf("sent at %v, before scheduled_at %v", started, at)
+	}
 }
