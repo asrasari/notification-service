@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -109,8 +110,10 @@ func run(ctx context.Context) error {
 		w.Run(claimCtx, sendCtx)
 	}()
 
-	// The provider URL is not logged: a webhook.site URL is a bearer secret.
+	// Only the provider's host is logged: the full webhook.site URL is a
+	// bearer secret. The host shows which provider is in use (D-020).
 	logger.InfoContext(ctx, "worker started",
+		"provider_host", providerHost(cfg.Provider.URL),
 		"worker_concurrency", cfg.Queue.WorkerConcurrency,
 		"rate_limit_per_channel", cfg.RateLimit.PerChannel,
 		"priority_weights", cfg.Queue.PriorityWeights,
@@ -197,6 +200,16 @@ func newWorker(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, wm *m
 		OnAttempt:          wm.OnAttempt,
 		OnClaim:            wm.OnClaim,
 	}, queue, client, logger, deps)
+}
+
+// providerHost returns the host (and port) of the provider URL, never its
+// path or query.
+func providerHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "invalid"
+	}
+	return u.Host
 }
 
 // newWorkerID is the hostname plus a short random suffix (D-015), so a

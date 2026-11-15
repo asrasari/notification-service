@@ -13,7 +13,7 @@ endif
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
 
-up: ## Build the image and start the stack in the background (needs .env with PROVIDER_URL)
+up: ## Build and start the stack in the background (built-in fake provider unless PROVIDER_URL is set)
 	docker compose up --build -d
 	@echo "API: http://localhost:$${API_PORT:-8080}  (docs: /docs)   worker: http://localhost:$${WORKER_PORT:-8081}/health"
 

@@ -52,9 +52,24 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # A stand-in provider, so the stack runs with no setup (D-020). Internal
+  # only: no host port. Set PROVIDER_URL to use webhook.site instead.
+  fakeprovider:
+    image: notification-service:local
+    pull_policy: never
+    command: ["/usr/local/bin/fakeprovider"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   worker:
     <<: *app
     command: ["/usr/local/bin/worker"]
+    # PROVIDER_URL from .env or the shell wins; unset or empty → the built-in
+    # fake provider. The worker logs the provider's host at startup.
+    environment:
+      DATABASE_URL: postgres://notifications:notifications@postgres:5432/notifications?sslmode=disable
+      PROVIDER_URL: ${PROVIDER_URL:-http://fakeprovider:9090/send}
     # Longer than SHUTDOWN_TIMEOUT (20s), so in-flight sends finish before Docker kills it.
     stop_grace_period: 30s
     # The worker's own HTTP server: GET /health (liveness) and GET /metrics.
@@ -65,6 +80,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      fakeprovider:
+        condition: service_started
 
 volumes:
   pgdata:

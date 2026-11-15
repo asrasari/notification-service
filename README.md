@@ -19,7 +19,7 @@ flowchart LR
     end
     api -->|insert, read, cancel| pg[(PostgreSQL<br/>notifications = queue)]
     worker -->|claim with lease,<br/>write result| pg
-    worker -->|"POST {to, channel, content}<br/>Idempotency-Key"| provider([provider<br/>webhook.site])
+    worker -->|"POST {to, channel, content}<br/>Idempotency-Key"| provider([provider<br/>built-in fake or webhook.site])
     worker -.->|heartbeat row| pg
     monitoring([your monitoring<br/>e.g. Prometheus]) -.->|GET /metrics| api
     monitoring -.->|GET /metrics| worker
@@ -29,24 +29,27 @@ flowchart LR
 
 ## Quick start
 
+**It runs out of the box with a built-in fake provider. To use webhook.site as the case describes, set `PROVIDER_URL`.** The webhook.site path was run for real: it answered 202, the `messageId` was stored, and each call took about 4–8 s on the free tier.
+
 You need Docker with Compose **v2.24 or newer** (the compose file uses `env_file` with `required: false`). The old hyphenated `docker-compose` (v1) is not supported.
 
-1. **Create a webhook.site URL** (it plays the provider). Open <https://webhook.site>, click **Edit**, and set:
+```sh
+docker compose up --build        # or: make up  (same, in the background)
+curl localhost:8080/health       # "status":"ok" once the worker is up
+```
+
+Compose starts Postgres, runs the migrations once, then starts `api` (port 8080), `worker` (port 8081) and the internal fake provider. The worker logs which provider host it sends to (`provider_host`), never the full URL. Swagger UI is at <http://localhost:8080/docs>. If a port is taken, set `API_PORT` / `WORKER_PORT`.
+
+**With webhook.site:**
+1. Open <https://webhook.site>, click **Edit**, and set:
    - **Status code:** `202`
    - **Content type:** `application/json`
    - **Response body:** `{"messageId": "3f1c2b8e-1d2a-4c4b-9e3f-0a1b2c3d4e5f", "status": "accepted", "timestamp": "2026-01-01T00:00:00Z"}`
 
    A fixed body is fine: the worker stores `messageId` when it is there and counts any 2xx as sent.
-2. **Configure and start:**
-   ```sh
-   cp .env.example .env
-   # edit .env: set PROVIDER_URL to your webhook.site URL
-   docker compose up --build        # or: make up  (same, in the background)
-   ```
-   Compose starts Postgres, runs the migrations once, then starts `api` (port 8080) and `worker` (port 8081). If a port is taken, set `API_PORT` / `WORKER_PORT` in `.env`.
-3. **Check it:** `curl localhost:8080/health` should say `"status":"ok"`. Swagger UI is at <http://localhost:8080/docs>.
+2. Start with your URL: either `cp .env.example .env` and set `PROVIDER_URL` there, or pass it once with `PROVIDER_URL=https://webhook.site/<your-id> docker compose up --build`.
 
-Free webhook.site URLs are slow (about 4.3 s per request in our runs) and rate-limited, so they can't show 100 messages per second; use [`make load`](#load-test) for that. `make` lists every target: `up`, `down`, `logs`, `test`, `test-short`, `load`, `build`.
+Free webhook.site URLs are slow and rate-limited, so they can't show 100 messages per second; use [`make load`](#load-test) for that. `make` lists every target: `up`, `down`, `logs`, `test`, `test-short`, `load`, `build`.
 
 ## API walkthrough
 
@@ -273,7 +276,7 @@ Timing tests use `testing/synctest` (fake time):
 
 ## Configuration
 
-Every setting is an environment variable with a default, except `DATABASE_URL` and `PROVIDER_URL` (worker only). Invalid combinations stop the process at startup with a clear message.
+Every setting is an environment variable with a default, except `DATABASE_URL` (compose sets it) and `PROVIDER_URL` (compose defaults it to the built-in fake; a worker run outside compose requires it). Invalid combinations stop the process at startup with a clear message.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -282,7 +285,7 @@ Every setting is an environment variable with a default, except `DATABASE_URL` a
 | `API_PORT`, `WORKER_PORT` | `8080`, `8081` | host ports (docker compose only) |
 | `DATABASE_URL` | – (required) | Postgres URL; compose sets it |
 | `DB_MAX_CONNS` | `10` | pool size per process |
-| `PROVIDER_URL` | – (worker) | your webhook.site URL |
+| `PROVIDER_URL` | compose: built-in fake | where the worker sends, e.g. your webhook.site URL |
 | `PROVIDER_TIMEOUT` | `10s` | one provider request |
 | `LEASE_DURATION` | `30s` | how long a claimed row is reserved; must be > `PROVIDER_TIMEOUT` |
 | `POLL_INTERVAL` | `200ms` | idle poll per channel |
@@ -329,7 +332,7 @@ All 3000 sent 10.6s after the first batch.
 PASS: every channel's peak is <= 100 per second.
 ```
 
-- **Why a fake provider:** webhook.site took about 4.3 s per request in our runs (about 12 msg/s with 50 senders), and free URLs are rate-limited. The fake provider (`cmd/fakeprovider`) is used only here.
+- **Why a fake provider:** webhook.site took about 4–8 s per request on the free tier (with 50 senders, about 6–12 msg/s), and free URLs are rate-limited. The load test uses its own copy of the fake provider (`cmd/fakeprovider`) with a fixed 50 ms latency.
 - **The rate limit is proved twice:** the synctest unit test proves the limiter logic at the source, and the load test measures at the receiving side. The fake provider records arrivals, and `make load` fails if any channel's peak in a 1-second sliding window is over `RATE_LIMIT_PER_CHANNEL`.
 - **Priority:** `high` was created last but finished first (p50 2.5 s vs 8.5 s for `low`).
 
