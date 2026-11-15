@@ -244,7 +244,7 @@ func TestPausedChannelMeansNoClaim(t *testing.T) {
 		h.store.next = rows(1, 1)
 		start := time.Now()
 		h.w.channels[0].pause(2 * time.Second)
-		if st := h.w.Status()[notification.ChannelSMS]; !st.Paused {
+		if st := h.w.Status()["sms"]; !st.Paused {
 			t.Fatalf("status = %+v, want paused", st)
 		}
 		h.runFor(3 * time.Second)
@@ -255,7 +255,7 @@ func TestPausedChannelMeansNoClaim(t *testing.T) {
 		if first := at[0].Sub(start); first < 2*time.Second {
 			t.Fatalf("first claim %v after start, want after the 2s pause", first)
 		}
-		if st := h.w.Status()[notification.ChannelSMS]; st.Paused {
+		if st := h.w.Status()["sms"]; st.Paused {
 			t.Errorf("still paused after the pause ended")
 		}
 	})

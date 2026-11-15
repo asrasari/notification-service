@@ -47,6 +47,7 @@ func TestUpDownUp(t *testing.T) {
 
 	tables := []string{"notifications", "delivery_attempts"}
 	listIndexes := []string{"notifications_created_idx", "notifications_status_created_idx"} // 00002
+	heartbeats := "worker_heartbeats"                                                        // 00003
 
 	up := func(step string) {
 		t.Helper()
@@ -60,7 +61,7 @@ func TestUpDownUp(t *testing.T) {
 		if v != latest {
 			t.Fatalf("%s: version %d, want %d", step, v, latest)
 		}
-		for _, name := range append(tables, listIndexes...) {
+		for _, name := range append(append(tables, listIndexes...), heartbeats) {
 			if !relationExists(ctx, t, db, name) {
 				t.Fatalf("%s: %s missing after up", step, name)
 			}
@@ -69,7 +70,20 @@ func TestUpDownUp(t *testing.T) {
 
 	up("first up")
 
-	// One step down removes only 00002's indexes.
+	// One step down removes only 00003's table.
+	if _, err := p.DownTo(ctx, 2); err != nil {
+		t.Fatalf("down to 2: %v", err)
+	}
+	if relationExists(ctx, t, db, heartbeats) {
+		t.Fatalf("%s still exists after down to 2", heartbeats)
+	}
+	for _, name := range append(tables, listIndexes...) {
+		if !relationExists(ctx, t, db, name) {
+			t.Fatalf("%s missing after down to 2", name)
+		}
+	}
+
+	// The next step down removes only 00002's indexes.
 	if _, err := p.DownTo(ctx, 1); err != nil {
 		t.Fatalf("down to 1: %v", err)
 	}

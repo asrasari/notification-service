@@ -70,7 +70,7 @@ func TestNewIsMigratedAndIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan tables: %v", err)
 	}
-	if diff := cmp.Diff([]string{"delivery_attempts", "notifications"}, tables); diff != "" {
+	if diff := cmp.Diff([]string{"delivery_attempts", "notifications", "worker_heartbeats"}, tables); diff != "" {
 		t.Errorf("tables (-want +got):\n%s", diff)
 	}
 

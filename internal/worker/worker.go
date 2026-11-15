@@ -123,11 +123,11 @@ type ChannelStatus struct {
 	Paused  bool   `json:"paused"`
 }
 
-// Status returns the state of every channel.
-func (w *Worker) Status() map[notification.Channel]ChannelStatus {
-	out := make(map[notification.Channel]ChannelStatus, len(w.channels))
+// Status returns the state of every channel, keyed by channel name.
+func (w *Worker) Status() map[string]ChannelStatus {
+	out := make(map[string]ChannelStatus, len(w.channels))
 	for _, c := range w.channels {
-		out[c.channel] = ChannelStatus{Breaker: c.breaker.State(), Paused: c.pausedFor() > 0}
+		out[string(c.channel)] = ChannelStatus{Breaker: c.breaker.State(), Paused: c.pausedFor() > 0}
 	}
 	return out
 }
