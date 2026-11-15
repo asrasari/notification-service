@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/asrasari/notification-service/api"
 	"github.com/asrasari/notification-service/internal/httpapi"
 	"github.com/asrasari/notification-service/internal/logging"
 	"github.com/asrasari/notification-service/internal/postgres"
@@ -482,4 +484,23 @@ func TestJSONFallbacks(t *testing.T) {
 		t.Errorf("Allow = %q, want GET and POST", allow)
 	}
 	want(t, e.do("PUT", "/health", ""), 405, "about:blank")
+}
+
+func TestSpecAndDocs(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+
+	r := e.do("GET", "/openapi.yaml", "")
+	if r.status != 200 || r.header.Get("Content-Type") != "application/yaml" || !bytes.Equal(r.body, api.Spec) {
+		t.Errorf("GET /openapi.yaml: status %d, type %q, %d bytes", r.status, r.header.Get("Content-Type"), len(r.body))
+	}
+	r = e.do("GET", "/docs", "")
+	if r.status != 200 || !strings.HasPrefix(r.header.Get("Content-Type"), "text/html") {
+		t.Fatalf("GET /docs: status %d, type %q", r.status, r.header.Get("Content-Type"))
+	}
+	for _, s := range []string{"swagger-ui-dist@5.17.14/", `url: "/openapi.yaml"`, "integrity="} {
+		if !strings.Contains(string(r.body), s) {
+			t.Errorf("docs page is missing %q", s)
+		}
+	}
 }

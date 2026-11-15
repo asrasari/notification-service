@@ -21,7 +21,7 @@ const healthPingTimeout = 2 * time.Second
 // NewHandler returns the API's root handler with all routes and middleware.
 // Routing is the stdlib ServeMux with method and {id} patterns (D-012).
 func NewHandler(logger *slog.Logger, db Pinger, store Store) http.Handler {
-	a := &api{logger: logger, store: store}
+	a := &handlers{logger: logger, store: store}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", healthHandler(logger, db))
@@ -32,6 +32,8 @@ func NewHandler(logger *slog.Logger, db Pinger, store Store) http.Handler {
 	mux.HandleFunc("POST /notifications/{id}/cancel", a.cancelNotification)
 	mux.HandleFunc("GET /batches/{id}", a.getBatch)
 	mux.HandleFunc("POST /batches/{id}/cancel", a.cancelBatch)
+	mux.HandleFunc("GET /openapi.yaml", openAPIHandler)
+	mux.HandleFunc("GET /docs", docsHandler)
 
 	return withCorrelationID(accessLog(logger, jsonFallback(mux)))
 }

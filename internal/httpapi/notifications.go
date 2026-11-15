@@ -25,7 +25,7 @@ type Store interface {
 	CancelBatch(ctx context.Context, batchID uuid.UUID) (int, error)
 }
 
-type api struct {
+type handlers struct {
 	logger *slog.Logger
 	store  Store
 }
@@ -33,7 +33,7 @@ type api struct {
 // createNotification handles POST /notifications: 201 with Location for a
 // new notification, 200 with the stored one for an idempotent repeat, 409
 // when the key was used with other content (D-009, D-016 §4).
-func (a *api) createNotification(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) createNotification(w http.ResponseWriter, r *http.Request) {
 	body, derr := readJSONBody(w, r)
 	if derr != nil {
 		writeDecodeError(w, r, derr)
@@ -75,7 +75,7 @@ func (a *api) createNotification(w http.ResponseWriter, r *http.Request) {
 
 // createBatch handles POST /notifications/batch (D-016 §6): all-or-nothing;
 // 201 when at least one item is new, 200 for a full replay.
-func (a *api) createBatch(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) createBatch(w http.ResponseWriter, r *http.Request) {
 	body, derr := readJSONBody(w, r)
 	if derr != nil {
 		writeDecodeError(w, r, derr)
@@ -120,7 +120,7 @@ func (a *api) createBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // getNotification handles GET /notifications/{id}, with attempt history.
-func (a *api) getNotification(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) getNotification(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathUUID(w, r)
 	if !ok {
 		return
@@ -137,7 +137,7 @@ func (a *api) getNotification(w http.ResponseWriter, r *http.Request) {
 }
 
 // listNotifications handles GET /notifications (D-014).
-func (a *api) listNotifications(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Query() silently drops pairs it can't decode; a broken query
 	// string is unreadable input, so it is a 400.
 	q, err := url.ParseQuery(r.URL.RawQuery)
@@ -171,7 +171,7 @@ func (a *api) listNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 // cancelNotification handles POST /notifications/{id}/cancel (D-016 §5).
-func (a *api) cancelNotification(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) cancelNotification(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathUUID(w, r)
 	if !ok {
 		return
@@ -196,7 +196,7 @@ func (a *api) cancelNotification(w http.ResponseWriter, r *http.Request) {
 }
 
 // getBatch handles GET /batches/{id}: counts for all five statuses.
-func (a *api) getBatch(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) getBatch(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathUUID(w, r)
 	if !ok {
 		return
@@ -213,7 +213,7 @@ func (a *api) getBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // cancelBatch handles POST /batches/{id}/cancel: cancels every pending row.
-func (a *api) cancelBatch(w http.ResponseWriter, r *http.Request) {
+func (a *handlers) cancelBatch(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathUUID(w, r)
 	if !ok {
 		return
